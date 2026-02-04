@@ -1,0 +1,135 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV TORCH_HOME=/app/.cache
+
+# depot をイメージ内に固定（root/user 共有）
+ENV JULIA_DEPOT_PATH=/opt/julia
+
+# ⚠️ ここでは JULIA_PKG_OFFLINE/PKG_SERVER は設定しない（ビルド中はオンライン前提）
+
+WORKDIR /app
+
+# ---- system deps ----
+RUN apt update && \
+    apt install -y \
+      wget curl ca-certificates \
+      git-lfs \
+      libsndfile1-dev \
+      libgl1 \
+      python3.10 python3-pip python3-dev python3-setuptools python3-wheel \
+      python3-cffi python3-brotli python3-distutils python3-venv python3-all-dev \
+      sagemath sagemath-jupyter \
+      build-essential gfortran \
+      libatomic1 libunwind8 && \
+    rm -rf /var/lib/apt/lists/*
+
+# ---- dedicated venv to avoid system/pip package混在 ----
+RUN python3 -m venv /opt/pyenv
+ENV VIRTUAL_ENV=/opt/pyenv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# ---- Julia install ----
+ARG JULIA_VERSION=1.11.1
+RUN wget -q https://julialang-s3.julialang.org/bin/linux/x64/1.11/julia-${JULIA_VERSION}-linux-x86_64.tar.gz && \
+    tar -xzf julia-${JULIA_VERSION}-linux-x86_64.tar.gz -C /opt && \
+    ln -s /opt/julia-${JULIA_VERSION}/bin/julia /usr/local/bin/julia && \
+    rm julia-${JULIA_VERSION}-linux-x86_64.tar.gz
+
+# ---- PackageCompiler / 必要パッケージ ----
+# ビルド中はオンラインで解決。DynamicPolynomials はフォールバックでURL指定も用意。
+# 1) General レジストリを Git 経由で追加（キャッシュされやすい）
+RUN JULIA_PKG_SERVER="" julia -e 'using Pkg; \
+    Pkg.Registry.add(Pkg.RegistrySpec(url="https://github.com/JuliaRegistries/General.git"))'
+
+# 2) PackageCompiler だけ先に取得（レイヤ分割で再試行しやすく）
+RUN JULIA_PKG_SERVER="" julia -e 'using Pkg; \
+    Pkg.add("PackageCompiler")'
+
+# 3) HC と DynamicPolynomials を取得（DynamicPolynomials は URL フォールバック付き）
+RUN JULIA_PKG_SERVER="" julia -e 'using Pkg; \
+    try \
+      Pkg.add(["HomotopyContinuation","DynamicPolynomials"]); \
+    catch e \
+      @warn "fallback to URL for DynamicPolynomials" e; \
+      Pkg.add(PackageSpec(name="DynamicPolynomials", url="https://github.com/JuliaAlgebra/DynamicPolynomials.jl")); \
+      Pkg.add(["HomotopyContinuation"]); \
+    end'
+
+# 4) まとめて precompile（ここも分割：失敗しても前段はキャッシュに残る）
+RUN JULIA_PKG_SERVER="" julia -e 'using Pkg; Pkg.precompile()'
+
+# ---- precompile 実行ファイル（solve を複数パターン踏む）----
+RUN printf '%s\n' \
+    'using HomotopyContinuation, DynamicPolynomials' \
+    '@polyvar x y' \
+    'solve([x^2 + y^2 - 1, x - y])' \
+    > /tmp/hc_precompile.jl
+
+# ---- sysimage 生成（PythonCall は入れない：安定性重視）----
+RUN julia -e 'using PackageCompiler; \
+    create_sysimage([:HomotopyContinuation, :DynamicPolynomials]; \
+      sysimage_path="/opt/julia/hc_sysimage.so", \
+      precompile_execution_file="/tmp/hc_precompile.jl", \
+      cpu_target="generic")'
+
+# ---- libjulia が読む標準 sysimage を hc_sysimage に差し替え（最強・確実）----
+RUN mv /opt/julia-${JULIA_VERSION}/lib/julia/sys.so /opt/julia-${JULIA_VERSION}/lib/julia/sys-default.so && \
+    ln -s /opt/julia/hc_sysimage.so /opt/julia-${JULIA_VERSION}/lib/julia/sys.so
+
+# ---- julia を sysimage 付きラッパーに差し替え（shebang 付き：CLI用）----
+RUN mv /usr/local/bin/julia /usr/local/bin/julia-original && \
+    printf '#!/usr/bin/env bash\nexec /opt/julia-%s/bin/julia -J /opt/julia/hc_sysimage.so "$@"\n' "$JULIA_VERSION" > /usr/local/bin/julia && \
+    chmod +x /usr/local/bin/julia
+
+
+# ----------------------------------------------------------------
+# create user
+# ----------------------------------------------------------------
+ARG USER_UID
+ARG USER_GID
+ARG USER_NAME=user
+ARG GROUP_NAME=user
+
+RUN if ! getent group $USER_GID >/dev/null; then groupadd -g $USER_GID $GROUP_NAME; fi && \
+    useradd -m -u $USER_UID -g $USER_GID -s /bin/bash $USER_NAME && \
+    chown -R $USER_UID:$USER_GID /opt/julia
+
+USER $USER_NAME
+ENV PATH=/home/$USER_NAME/.local/bin:$PATH
+
+# ---- ランタイム挙動（ここから先は“実行時”にのみ効く）----
+# libjulia が読む sysimage を明示（← Python から効くのはコレ）
+ENV JULIA_SYSIMAGE=/opt/julia/hc_sysimage.so
+
+# juliacall/pyjuliapkg/CondaPkg の自動動作を抑制
+ENV JULIAPKG_OFF=1 \
+    JULIA_CONDAPKG_OFF=1 \
+    JULIA_PYTHONCALL_INSTALL=never
+# ※ 必要なときだけ完全オフラインに
+# ENV JULIA_PKG_SERVER=""
+# ENV JULIA_PKG_OFFLINE=true
+
+# ---- Python base tooling ----
+RUN python -m pip install --no-cache-dir -U pip setuptools==65.5.1 wheel
+
+# ----------------------------------------------------------------
+FROM base AS torch-2.3.0
+
+# ---- PyTorch ----
+RUN python -m pip install --no-cache-dir \
+    torch==2.3.0+cu121 torchvision==0.18.0+cu121 \
+    -f https://download.pytorch.org/whl/torch_stable.html
+
+# ---- Python requirements ----
+COPY requirements.txt /app
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt
+
+RUN JULIAPKG_OFF=1 JULIA_CONDAPKG_OFF=1 JULIA_PYTHONCALL_INSTALL=never \
+    python3 - <<'PY'
+from juliacall import Main as jl
+jl.seval("using HomotopyContinuation, DynamicPolynomials; @polyvar x y")
+jl.seval("solve([x^2 + y^2 - 1, x - y])")
+print("juliacall warmup done.")
+PY

@@ -1,0 +1,18 @@
+torch>=2.0.0
+numpy>=1.25.0
+pandas>=2.0.0
+jupyter>=1.0.0
+matplotlib>=3.7.0
+transformers==4.51.3
+omegaconf==2.1.2
+joblib==1.5.0
+scipy==1.11.4
+juliacall>=0.9
+gymnasium[mujoco]>=1.0.0
+tyro
+tensorboard
+wandb
+# sage --pip install transformers
+# sage --pip install torch
+# sage --pip install omegaconf
+# sage --pip install joblib

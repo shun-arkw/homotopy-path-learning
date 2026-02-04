@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+dataset/
+data/
+my_idea/
+results/
+sandbox/
+runs/
+wandb/
+vizualization_for_powerpoint/
