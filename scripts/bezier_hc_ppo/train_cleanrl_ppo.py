@@ -16,6 +16,54 @@ def main():
     parser.add_argument("--alpha-z", type=float, default=2.0)
     parser.add_argument("--failure-penalty", type=float, default=1e6, dest="failure_penalty")
     parser.add_argument("--rho", type=float, default=1.0)
+    parser.add_argument(
+        "--terminal-linear-bonus",
+        action="store_true",
+        dest="terminal_linear_bonus",
+        help="Add terminal reward based on linear baseline cost.",
+    )
+    parser.add_argument(
+        "--terminal-linear-bonus-coef",
+        type=float,
+        default=1.0,
+        dest="terminal_linear_bonus_coef",
+    )
+    parser.add_argument(
+        "--terminal-z0-bonus",
+        action="store_true",
+        dest="terminal_z0_bonus",
+        help="Add terminal reward based on z=0 Bezier cost.",
+    )
+    parser.add_argument(
+        "--terminal-z0-bonus-coef",
+        type=float,
+        default=1.0,
+        dest="terminal_z0_bonus_coef",
+    )
+    parser.add_argument(
+        "--terminal-z0-bonus-scale",
+        type=float,
+        default=100.0,
+        dest="terminal_z0_bonus_scale",
+    )
+    parser.add_argument(
+        "--step-reward-scale",
+        type=float,
+        default=1.0,
+        dest="step_reward_scale",
+    )
+    parser.add_argument(
+        "--require-z0-success",
+        action="store_true",
+        dest="require_z0_success",
+        help="Resample gamma until z=0 Bezier succeeds.",
+    )
+    parser.add_argument(
+        "--z0-max-tries",
+        type=int,
+        default=10,
+        dest="z0_max_tries",
+    )
     parser.add_argument("--seed", type=int, default=0)
 
     # TargetCoeffConfig: sampling of target polynomial coefficients
@@ -44,6 +92,9 @@ def main():
     parser.add_argument("--eval-interval", type=int, default=10, dest="eval_interval")
     parser.add_argument("--eval-num-instances", type=int, default=256, dest="eval_num_instances")
     parser.add_argument("--eval-seed", type=int, default=0, dest="eval_seed")
+    parser.add_argument("--eval-linear-baseline", action="store_true", dest="eval_linear_baseline")
+    parser.add_argument("--save-model", action="store_true", dest="save_model", help="Save model to save_dir/run_name after training.")
+    parser.add_argument("--save-dir", type=str, default="runs", dest="save_dir", help="Base directory for run logs and saved model.")
     parser.add_argument("--track", action="store_true")
     parser.add_argument("--wandb-project-name", type=str, default=None, dest="wandb_project_name")
     parser.add_argument("--wandb-entity", type=str, default=None, dest="wandb_entity")
@@ -58,6 +109,14 @@ def main():
     os.environ["BH_ALPHA_Z"] = str(args.alpha_z)
     os.environ["BH_FAILURE_PENALTY"] = str(args.failure_penalty)
     os.environ["BH_RHO_REJECT"] = str(args.rho)
+    os.environ["BH_TERMINAL_LINEAR_BONUS"] = "1" if args.terminal_linear_bonus else "0"
+    os.environ["BH_TERMINAL_LINEAR_BONUS_COEF"] = str(args.terminal_linear_bonus_coef)
+    os.environ["BH_TERMINAL_Z0_BONUS"] = "1" if args.terminal_z0_bonus else "0"
+    os.environ["BH_TERMINAL_Z0_BONUS_COEF"] = str(args.terminal_z0_bonus_coef)
+    os.environ["BH_TERMINAL_Z0_BONUS_SCALE"] = str(args.terminal_z0_bonus_scale)
+    os.environ["BH_STEP_REWARD_SCALE"] = str(args.step_reward_scale)
+    os.environ["BH_REQUIRE_Z0_SUCCESS"] = "1" if args.require_z0_success else "0"
+    os.environ["BH_Z0_MAX_TRIES"] = str(args.z0_max_tries)
     os.environ["BH_SEED"] = str(args.seed)
     os.environ["BH_EXTENDED_PRECISION"] = "0"
     # TargetCoeffConfig
@@ -74,7 +133,7 @@ def main():
 
     cmd = [
         sys.executable,
-        "scripts/opt_hc_path/ppo_continuous_action.py",
+        "scripts/bezier_hc_ppo/ppo_continuous_action.py",
         "--env-id", "hc_envs.register_env:BezierHomotopyUnivar-v0",
         "--seed", str(args.seed),
         "--num-envs", str(args.num_envs),
@@ -89,6 +148,11 @@ def main():
         "--eval-num-instances", str(args.eval_num_instances),
         "--eval-seed", str(args.eval_seed),
     ]
+    if args.eval_linear_baseline:
+        cmd.append("--eval-linear-baseline")
+    if args.save_model:
+        cmd.append("--save-model")
+    cmd += ["--save-dir", args.save_dir]
 
     # Forward tracking flags explicitly.
     if args.track:

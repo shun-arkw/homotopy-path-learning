@@ -1,22 +1,31 @@
 #!/bin/bash
 # =============================================================================
-# PPO TRAINING FOR BEZIER HOMOTOPY UNIVAR ENV
+# EVAL SAVED PPO MODEL (BEZIER VS LINEAR SINGLE-GAMMA)
 # =============================================================================
-# Runs scripts/bezier_hc_ppo/train_cleanrl_ppo.py with configurable arguments.
+# Runs scripts/bezier_hc_ppo/eval_saved_model.py with configurable arguments.
+# Keep section 1 and 2 in sync with sh/run_ppo.sh so eval uses the same env.
 #
-# Usage: bash sh/run_ppo.sh
+# Usage:
+#   bash sh/eval_model.sh
+#   bash sh/eval_model.sh /path/to/ppo_continuous_action.cleanrl_model
 #
 # CONFIGURATION SECTIONS:
-# 1. Env / problem parameters     - degree, bezier_degree, episode_len, etc.
-# 2. TargetCoeffConfig             - target polynomial coefficient sampling
-# 3. PPO parameters                - total_timesteps, num_steps, learning_rate, etc.
-# 4. Eval & logging                - eval_interval, eval_num_instances, wandb
-# 5. Run training                  - Execute train_cleanrl_ppo.py
+# 1. Model path              - path to .cleanrl_model (or pass as $1)
+# 2. Env / problem parameters - degree, bezier_degree, episode_len, etc. (match run_ppo.sh)
+# 3. TargetCoeffConfig        - target polynomial coefficient sampling (match run_ppo.sh)
+# 4. Eval options             - num_instances, eval_seed, save_results, device
+# 5. Run evaluation           - Execute eval_saved_model.py
 # =============================================================================
 
 
 # =============================================================================
-# 1. ENV / PROBLEM PARAMETERS
+# 1. MODEL PATH
+# =============================================================================
+# Set to your saved model, or pass as first argument: bash sh/eval_model.sh RUNS/.../model.cleanrl_model
+model_path="runs/hc_envs.register_env:BezierHomotopyUnivar-v0__ppo_continuous_action__0__1770260251/ppo_continuous_action.cleanrl_model"
+
+# =============================================================================
+# 2. ENV / PROBLEM PARAMETERS (match run_ppo.sh section 1)
 # =============================================================================
 degree=10
 bezier_degree=3
@@ -26,8 +35,8 @@ alpha_z=2.0
 failure_penalty=3000
 rho=1.0
 seed=0
-terminal_linear_bonus=true
-terminal_linear_bonus_coef=10.0
+terminal_linear_bonus=false
+terminal_linear_bonus_coef=3.0
 terminal_z0_bonus=true
 terminal_z0_bonus_coef=2.0
 terminal_z0_bonus_scale=25.0
@@ -36,7 +45,7 @@ require_z0_success=true
 z0_max_tries=20
 
 # =============================================================================
-# 2. TARGET COEFF CONFIG (sampling of target polynomial coefficients)
+# 3. TARGET COEFF CONFIG (match run_ppo.sh section 2)
 # =============================================================================
 target_dist_real="uniform"
 target_dist_imag="uniform"
@@ -50,35 +59,22 @@ target_low_imag=-5
 target_high_imag=5
 
 # =============================================================================
-# 3. PPO PARAMETERS
+# 4. EVAL OPTIONS
 # =============================================================================
-total_timesteps=1000000
-num_steps=2048
-num_envs=1
-learning_rate=0.0003
-update_epochs=10
-num_minibatches=32
-gamma=0.99
-gae_lambda=0.95
+num_instances=1024
+eval_seed=123
+device="cpu"
+# Optional: write JSON results to this path (leave empty to skip)
+save_results=""
 
 # =============================================================================
-# 4. EVAL & LOGGING
+# 5. RUN EVALUATION
 # =============================================================================
-eval_interval=10
-eval_num_instances=1024
-eval_seed=0
-eval_linear_baseline=true
-eval_zero_action=true
-save_model=true
-save_dir="runs"
-track=false
-wandb_project_name="BezierHomotopyUnivar-PPO"
-wandb_entity=""
-
-# =============================================================================
-# 5. RUN TRAINING
-# =============================================================================
-python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
+python3 scripts/bezier_hc_ppo/eval_saved_model.py \
+    --model-path "$model_path" \
+    --num-instances "$num_instances" \
+    --eval-seed "$eval_seed" \
+    --device "$device" \
     --degree "$degree" \
     --bezier-degree "$bezier_degree" \
     --latent-dim "$latent_dim" \
@@ -86,6 +82,7 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --alpha-z "$alpha_z" \
     --failure-penalty "$failure_penalty" \
     --rho "$rho" \
+    --seed "$seed" \
     $([ "$terminal_linear_bonus" = true ] && echo "--terminal-linear-bonus") \
     --terminal-linear-bonus-coef "$terminal_linear_bonus_coef" \
     $([ "$terminal_z0_bonus" = true ] && echo "--terminal-z0-bonus") \
@@ -94,7 +91,6 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --step-reward-scale "$step_reward_scale" \
     $([ "$require_z0_success" = true ] && echo "--require-z0-success") \
     --z0-max-tries "$z0_max_tries" \
-    --seed "$seed" \
     --target-dist-real "$target_dist_real" \
     --target-dist-imag "$target_dist_imag" \
     --target-mean-real "$target_mean_real" \
@@ -105,21 +101,4 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --target-high-real "$target_high_real" \
     --target-low-imag "$target_low_imag" \
     --target-high-imag "$target_high_imag" \
-    --total-timesteps "$total_timesteps" \
-    --num-steps "$num_steps" \
-    --num-envs "$num_envs" \
-    --learning-rate "$learning_rate" \
-    --update-epochs "$update_epochs" \
-    --num-minibatches "$num_minibatches" \
-    --gamma "$gamma" \
-    --gae-lambda "$gae_lambda" \
-    --eval-interval "$eval_interval" \
-    --eval-num-instances "$eval_num_instances" \
-    --eval-seed "$eval_seed" \
-    $([ "$eval_linear_baseline" = true ] && echo "--eval-linear-baseline") \
-    $([ "$eval_zero_action" = true ] && echo "--eval-zero-action") \
-    $([ "$save_model" = true ] && echo "--save-model") \
-    --save-dir "$save_dir" \
-    $([ "$track" = true ] && echo "--track") \
-    $([ -n "$wandb_project_name" ] && echo "--wandb-project-name" "$wandb_project_name") \
-    $([ -n "$wandb_entity" ] && echo "--wandb-entity" "$wandb_entity")
+    $([ -n "$save_results" ] && echo "--save-results" "$save_results")

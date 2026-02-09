@@ -1,4 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
+import json
 import logging
 import os
 import random
@@ -16,6 +17,12 @@ import torch.optim as optim
 import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
+
+from eval_utils import (
+    build_fixed_eval_instances,
+    run_fixed_eval,
+    run_linear_baseline_eval,
+)
 
 
 @dataclass
@@ -38,6 +45,8 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     save_model: bool = False
     """whether to save model into the `runs/{run_name}` folder"""
+    save_dir: str = "runs"
+    """base directory for run logs and saved model (run subdir is created inside)"""
     upload_model: bool = False
     """whether to upload the saved model to huggingface"""
     hf_entity: str = ""
@@ -84,6 +93,10 @@ class Args:
     """number of fixed validation instances"""
     eval_seed: int = 0
     """seed for generating fixed validation instances"""
+    eval_linear_baseline: bool = False
+    """evaluate linear-path baseline on fixed validation set"""
+    eval_zero_action: bool = False
+    """evaluate Bezier tracker with action=0 on fixed validation set"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -158,52 +171,6 @@ def _mean_scalar(x):
     return float(x)
 
 
-def _build_fixed_eval_instances(eval_env, num_instances: int, seed: int):
-    # Use the env's internal sampler with a fixed RNG to build a stable set.
-    base_env = eval_env.unwrapped
-    base_env.rng = np.random.default_rng(int(seed))
-    instances = [base_env._sample_instance() for _ in range(int(num_instances))]
-    base_env.set_fixed_instances(instances, reset_idx=True)
-    return instances
-
-
-def _run_fixed_eval(eval_env, agent, device, num_instances: int) -> dict:
-    successes = []
-    tracking_costs = []
-    total_attempts = []
-    accepted_steps = []
-    rejected_steps = []
-    with torch.no_grad():
-        for _ in range(int(num_instances)):
-            obs, _ = eval_env.reset()
-            done = False
-            last_info = None
-            while not done:
-                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device)
-                if obs_tensor.ndim == 1:
-                    obs_tensor = obs_tensor.unsqueeze(0)
-                action_mean = agent.actor_mean(obs_tensor)
-                action = action_mean.cpu().numpy()[0]
-                obs, _, terminated, truncated, info = eval_env.step(action)
-                done = terminated or truncated
-                last_info = info
-            if last_info is not None:
-                successes.append(float(last_info.get("success", 0.0)))
-                tracking_costs.append(float(last_info.get("tracking_cost", 0.0)))
-                total_attempts.append(float(last_info.get("total_step_attempts", 0.0)))
-                accepted_steps.append(float(last_info.get("accepted_steps", 0.0)))
-                rejected_steps.append(float(last_info.get("rejected_steps", 0.0)))
-    if not successes:
-        return {}
-    return {
-        "success_rate": float(np.mean(successes)),
-        "tracking_cost_mean": float(np.mean(tracking_costs)),
-        "total_step_attempts_mean": float(np.mean(total_attempts)),
-        "accepted_steps_mean": float(np.mean(accepted_steps)),
-        "rejected_steps_mean": float(np.mean(rejected_steps)),
-    }
-
-
 if __name__ == "__main__":
     print("RUNNING:", __file__)
 
@@ -227,7 +194,7 @@ if __name__ == "__main__":
             save_code=True,
         )
 
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(os.path.join(args.save_dir, run_name))
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -254,9 +221,11 @@ if __name__ == "__main__":
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     eval_env = None
+    eval_instances = None
+    linear_baseline_done = False
     if args.eval_interval > 0 and args.eval_num_instances > 0:
         eval_env = make_env(args.env_id, 0, False, run_name, args.gamma)()
-        _build_fixed_eval_instances(eval_env, args.eval_num_instances, args.eval_seed)
+        eval_instances = build_fixed_eval_instances(eval_env, args.eval_num_instances, args.eval_seed)
 
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
@@ -450,7 +419,9 @@ if __name__ == "__main__":
             and args.eval_interval > 0
             and iteration % args.eval_interval == 0
         ):
-            eval_metrics = _run_fixed_eval(eval_env, agent, device, args.eval_num_instances)
+            if eval_instances is not None:
+                eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
+            eval_metrics = run_fixed_eval(eval_env, agent, device, args.eval_num_instances)
             if eval_metrics:
                 writer.add_scalar("eval/success_rate", eval_metrics["success_rate"], global_step)
                 writer.add_scalar("eval/tracking_cost_mean", eval_metrics["tracking_cost_mean"], global_step)
@@ -464,32 +435,110 @@ if __name__ == "__main__":
                     f"tracking_cost_mean={eval_metrics['tracking_cost_mean']:.3f} | "
                     f"total_step_attempts_mean={eval_metrics['total_step_attempts_mean']:.1f}"
                 )
+            if args.eval_zero_action:
+                if eval_instances is not None:
+                    eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
+                eval_z0_metrics = run_fixed_eval(
+                    eval_env,
+                    agent,
+                    device,
+                    args.eval_num_instances,
+                    force_action_zero=True,
+                )
+                if eval_z0_metrics:
+                    writer.add_scalar(
+                        "eval_z0/success_rate", eval_z0_metrics["success_rate"], global_step
+                    )
+                    writer.add_scalar(
+                        "eval_z0/tracking_cost_mean",
+                        eval_z0_metrics["tracking_cost_mean"],
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "eval_z0/total_step_attempts_mean",
+                        eval_z0_metrics["total_step_attempts_mean"],
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "eval_z0/accepted_steps_mean",
+                        eval_z0_metrics["accepted_steps_mean"],
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "eval_z0/rejected_steps_mean",
+                        eval_z0_metrics["rejected_steps_mean"],
+                        global_step,
+                    )
+                    logging.info(
+                        "eval_z0 | "
+                        f"global_step={global_step} | "
+                        f"success_rate={eval_z0_metrics['success_rate']:.3f} | "
+                        f"tracking_cost_mean={eval_z0_metrics['tracking_cost_mean']:.3f} | "
+                        f"total_step_attempts_mean={eval_z0_metrics['total_step_attempts_mean']:.1f}"
+                    )
+            if args.eval_linear_baseline and not linear_baseline_done:
+                if eval_instances is not None:
+                    eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
+                linear_metrics = run_linear_baseline_eval(eval_env, args.eval_num_instances)
+                if linear_metrics:
+                    writer.add_scalar("eval_linear/success_rate", linear_metrics["success_rate"], global_step)
+                    writer.add_scalar("eval_linear/tracking_cost_mean", linear_metrics["tracking_cost_mean"], global_step)
+                    writer.add_scalar(
+                        "eval_linear/total_step_attempts_mean",
+                        linear_metrics["total_step_attempts_mean"],
+                        global_step,
+                    )
+                    writer.add_scalar("eval_linear/accepted_steps_mean", linear_metrics["accepted_steps_mean"], global_step)
+                    writer.add_scalar("eval_linear/rejected_steps_mean", linear_metrics["rejected_steps_mean"], global_step)
+                    logging.info(
+                        "eval_linear | "
+                        f"global_step={global_step} | "
+                        f"success_rate={linear_metrics['success_rate']:.3f} | "
+                        f"tracking_cost_mean={linear_metrics['tracking_cost_mean']:.3f} | "
+                        f"total_step_attempts_mean={linear_metrics['total_step_attempts_mean']:.1f}"
+                    )
+                linear_baseline_done = True
 
     if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+        run_dir = os.path.join(args.save_dir, run_name)
+        os.makedirs(run_dir, exist_ok=True)
+        model_path = os.path.join(run_dir, f"{args.exp_name}.cleanrl_model")
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
-        from cleanrl_utils.evals.ppo_eval import evaluate
-
-        episodic_returns = evaluate(
-            model_path,
-            make_env,
-            args.env_id,
-            eval_episodes=10,
-            run_name=f"{run_name}-eval",
-            Model=Agent,
-            device=device,
-            gamma=args.gamma,
-        )
-        for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
-
-        if args.upload_model:
-            from cleanrl_utils.huggingface import push_to_hub
-
-            repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
-            repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
-            push_to_hub(args, episodic_returns, repo_id, "PPO", f"runs/{run_name}", f"videos/{run_name}-eval")
+        # Save env config so eval can build the same obs/action space
+        env_config = {
+            "degree": int(os.environ.get("BH_DEGREE", "10")),
+            "bezier_degree": int(os.environ.get("BH_BEZIER_DEGREE", "2")),
+            "latent_dim": int(os.environ.get("BH_M", "8")),
+            "episode_len": int(os.environ.get("BH_T", "8")),
+            "alpha_z": float(os.environ.get("BH_ALPHA_Z", "2.0")),
+            "failure_penalty": float(os.environ.get("BH_FAILURE_PENALTY", "1000000")),
+            "rho": float(os.environ.get("BH_RHO_REJECT", "1.0")),
+            "seed": int(os.environ.get("BH_SEED", "0")),
+            "terminal_linear_bonus": os.environ.get("BH_TERMINAL_LINEAR_BONUS", "0") == "1",
+            "terminal_linear_bonus_coef": float(os.environ.get("BH_TERMINAL_LINEAR_BONUS_COEF", "1.0")),
+            "terminal_z0_bonus": os.environ.get("BH_TERMINAL_Z0_BONUS", "0") == "1",
+            "terminal_z0_bonus_coef": float(os.environ.get("BH_TERMINAL_Z0_BONUS_COEF", "1.0")),
+            "terminal_z0_bonus_scale": float(os.environ.get("BH_TERMINAL_Z0_BONUS_SCALE", "100.0")),
+            "step_reward_scale": float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
+            "require_z0_success": os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1",
+            "z0_max_tries": int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
+            "target_dist_real": os.environ.get("BH_TARGET_DIST_REAL", "gaussian"),
+            "target_dist_imag": os.environ.get("BH_TARGET_DIST_IMAG", "gaussian"),
+            "target_mean_real": float(os.environ.get("BH_TARGET_MEAN_REAL", "0.0")),
+            "target_mean_imag": float(os.environ.get("BH_TARGET_MEAN_IMAG", "0.0")),
+            "target_std_real": float(os.environ.get("BH_TARGET_STD_REAL", "0.5")),
+            "target_std_imag": float(os.environ.get("BH_TARGET_STD_IMAG", "0.5")),
+            "target_low_real": float(os.environ.get("BH_TARGET_LOW_REAL", "-0.5")),
+            "target_high_real": float(os.environ.get("BH_TARGET_HIGH_REAL", "0.5")),
+            "target_low_imag": float(os.environ.get("BH_TARGET_LOW_IMAG", "-0.5")),
+            "target_high_imag": float(os.environ.get("BH_TARGET_HIGH_IMAG", "0.5")),
+            "gamma": args.gamma,
+        }
+        config_path = os.path.join(run_dir, "config.json")
+        with open(config_path, "w") as f:
+            json.dump(env_config, f, indent=2)
+        print(f"config saved to {config_path}")
 
     envs.close()
     writer.close()

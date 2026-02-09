@@ -7,7 +7,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from hc_envs.julia_backend import get_backend, BezierUnivarConfig
+from hc_envs.julia_backend import get_backend, BezierUnivarConfig, LinearUnivarConfig
 
 
 def complex_coeffs_to_real(x: np.ndarray) -> np.ndarray:
@@ -94,6 +94,14 @@ class BezierHomotopyUnivarEnv(gym.Env):
         alpha_z: float,
         failure_penalty: float,
         rho_reject: float = 1.0,
+        terminal_linear_bonus: bool = True,
+        terminal_linear_bonus_coef: float = 1.0,
+        terminal_z0_bonus: bool = False,
+        terminal_z0_bonus_coef: float = 1.0,
+        terminal_z0_bonus_scale: float = 100.0,
+        step_reward_scale: float = 1.0,
+        require_z0_success: bool = False,
+        z0_max_tries: int = 10,
         seed: int = 0,
         extended_precision: bool = False,
         compute_newton_iters: bool = False,  # Prefer False during training
@@ -101,7 +109,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
         f_coeff_config: Optional[TargetCoeffConfig] = None,
         fixed_instances: Optional[Sequence[ProblemInstance]] = None,
         # Advanced: you can override the Julia include expression if needed
-        julia_include_seval: str = 'include("scripts/opt_hc_path/bezier_univar.jl")',
+        julia_include_seval: str = 'include("scripts/bezier_hc_ppo/bezier_univar.jl")',
     ):
         super().__init__()
         assert bezier_degree in (2, 3), "Only bezier_degree=2 or 3 is supported."
@@ -118,6 +126,14 @@ class BezierHomotopyUnivarEnv(gym.Env):
         self.alpha_z = float(alpha_z)
         self.failure_penalty = float(failure_penalty)
         self.rho = float(rho_reject)
+        self.terminal_linear_bonus = bool(terminal_linear_bonus)
+        self.terminal_linear_bonus_coef = float(terminal_linear_bonus_coef)
+        self.terminal_z0_bonus = bool(terminal_z0_bonus)
+        self.terminal_z0_bonus_coef = float(terminal_z0_bonus_coef)
+        self.terminal_z0_bonus_scale = float(terminal_z0_bonus_scale)
+        self.step_reward_scale = float(step_reward_scale)
+        self.require_z0_success = bool(require_z0_success)
+        self.z0_max_tries = int(z0_max_tries)
 
         self.seed0 = int(seed)
         self.rng = np.random.default_rng(self.seed0)
@@ -138,6 +154,14 @@ class BezierHomotopyUnivarEnv(gym.Env):
             extended_precision=self.extended_precision,
         )
         self.backend.ensure_ready(backend_cfg)
+        if self.terminal_linear_bonus:
+            linear_cfg = LinearUnivarConfig(
+                degree=self.degree,
+                seed=self.seed0,
+                compute_newton_iters=self.compute_newton_iters,
+                extended_precision=self.extended_precision,
+            )
+            self.backend.ensure_ready_linear(linear_cfg)
 
         # Fixed basis U: (2*num_coeffs x latent_dim)
         self.U = make_orthonormal_U(self.rng, dim=2 * self.num_coeffs, m=self.latent_dim)
@@ -145,6 +169,8 @@ class BezierHomotopyUnivarEnv(gym.Env):
         # Multi-step internal state
         self.z = np.zeros((self.bezier_degree - 1, self.latent_dim), dtype=np.float64)
         self.prev_tracking_cost: Optional[float] = None
+        self.linear_tracking_cost: Optional[float] = None
+        self.z0_tracking_cost: Optional[float] = None
         self.t = 0
         self.inst: Optional[ProblemInstance] = None
 
@@ -198,10 +224,27 @@ class BezierHomotopyUnivarEnv(gym.Env):
         start_coeffs[deg] = 1.0 + 0.0j
 
         # Gamma: exp(i theta)
-        theta = float(self.rng.uniform(0.0, 2.0 * np.pi))
-        gamma = np.cos(theta) + 1j * np.sin(theta)
+        def _sample_gamma() -> complex:
+            theta = float(self.rng.uniform(0.0, 2.0 * np.pi))
+            return np.cos(theta) + 1j * np.sin(theta)
 
-        return ProblemInstance(start_coeffs=start_coeffs, target_coeffs=target_coeffs, gamma=gamma)
+        if not self.require_z0_success:
+            gamma = _sample_gamma()
+            return ProblemInstance(start_coeffs=start_coeffs, target_coeffs=target_coeffs, gamma=gamma)
+
+        max_tries = max(1, self.z0_max_tries)
+        last_gamma = None
+        for _ in range(max_tries):
+            gamma = _sample_gamma()
+            inst = ProblemInstance(start_coeffs=start_coeffs, target_coeffs=target_coeffs, gamma=gamma)
+            if self._check_z0_success(inst):
+                return inst
+            last_gamma = gamma
+
+        # Fallback: return the last sampled gamma even if it failed.
+        if last_gamma is None:
+            last_gamma = _sample_gamma()
+        return ProblemInstance(start_coeffs=start_coeffs, target_coeffs=target_coeffs, gamma=last_gamma)
 
     # ---------------------------
     # Control points construction
@@ -238,6 +281,45 @@ class BezierHomotopyUnivarEnv(gym.Env):
 
         return ctrl
 
+    def _build_control_points_for(self, inst: ProblemInstance, z_override: np.ndarray) -> np.ndarray:
+        """
+        Build control points for a given instance and z (no side effects).
+        """
+        start_coeffs = inst.start_coeffs
+        target_coeffs = inst.target_coeffs
+        gamma = inst.gamma
+
+        num_coeffs = self.num_coeffs
+        d = self.bezier_degree
+        ctrl = np.zeros((d + 1, num_coeffs), dtype=np.complex128)
+
+        P0 = gamma * start_coeffs
+        Pd = target_coeffs
+        ctrl[0, :] = P0
+        ctrl[d, :] = Pd
+
+        tilde_P0 = complex_coeffs_to_real(P0)
+        tilde_Pd = complex_coeffs_to_real(Pd)
+
+        for k in range(1, d):
+            t = k / d
+            tilde_bar = (1.0 - t) * tilde_P0 + t * tilde_Pd
+            tilde_pk = tilde_bar + self.U @ z_override[k - 1]
+            ctrl[k, :] = real_to_complex_coeffs(tilde_pk)
+
+        return ctrl
+
+    def _check_z0_success(self, inst: ProblemInstance) -> bool:
+        z0 = np.zeros((self.bezier_degree - 1, self.latent_dim), dtype=np.float64)
+        ctrl = self._build_control_points_for(inst, z0)
+        out = self.backend.jl.track_bezier_paths_univar(
+            int(self.degree),
+            int(self.bezier_degree),
+            ctrl,
+            compute_newton_iters=bool(self.compute_newton_iters),
+        )
+        return bool(out.success_flag)
+
     def _make_obs(self) -> np.ndarray:
         assert self.inst is not None
         target_coeffs = self.inst.target_coeffs
@@ -259,6 +341,42 @@ class BezierHomotopyUnivarEnv(gym.Env):
 
         obs = np.concatenate(obs_parts, axis=0).astype(np.float32)
         return obs
+
+    def _compute_linear_tracking_cost(self) -> float:
+        assert self.inst is not None
+        start_coeffs = self.inst.start_coeffs
+        target_coeffs = self.inst.target_coeffs
+        gamma = self.inst.gamma
+        start_path = gamma * start_coeffs
+        out = self.backend.jl.track_linear_paths_univar(
+            int(self.degree),
+            start_path,
+            target_coeffs,
+            compute_newton_iters=bool(self.compute_newton_iters),
+        )
+        success = bool(out.success_flag)
+        acc = int(out.total_accepted_steps)
+        rej = int(out.total_rejected_steps)
+        if success:
+            return float(acc + self.rho * rej)
+        return float(self.failure_penalty)
+
+    def _compute_z0_tracking_cost(self) -> float:
+        assert self.inst is not None
+        z0 = np.zeros((self.bezier_degree - 1, self.latent_dim), dtype=np.float64)
+        ctrl = self._build_control_points_for(self.inst, z0)
+        out = self.backend.jl.track_bezier_paths_univar(
+            int(self.degree),
+            int(self.bezier_degree),
+            ctrl,
+            compute_newton_iters=bool(self.compute_newton_iters),
+        )
+        success = bool(out.success_flag)
+        acc = int(out.total_accepted_steps)
+        rej = int(out.total_rejected_steps)
+        if success:
+            return float(acc + self.rho * rej)
+        return float(self.failure_penalty)
 
     def set_fixed_instances(self, instances: Sequence[ProblemInstance], reset_idx: bool = True) -> None:
         """
@@ -286,7 +404,14 @@ class BezierHomotopyUnivarEnv(gym.Env):
             self.inst = self._sample_instance()
         self.z[...] = 0.0
         self.prev_tracking_cost = None
+        self.linear_tracking_cost = None
+        self.z0_tracking_cost = None
         self.t = 0
+
+        if self.terminal_linear_bonus:
+            self.linear_tracking_cost = self._compute_linear_tracking_cost()
+        if self.terminal_z0_bonus:
+            self.z0_tracking_cost = self._compute_z0_tracking_cost()
 
         obs = self._make_obs()
         info = {"degree": self.degree, "bezier_degree": self.bezier_degree}
@@ -330,17 +455,36 @@ class BezierHomotopyUnivarEnv(gym.Env):
         if self.prev_tracking_cost is None:
             reward = 0.0
         else:
-            reward = float(self.prev_tracking_cost - tracking_cost)
+            reward = float(self.prev_tracking_cost - tracking_cost) * self.step_reward_scale
         self.prev_tracking_cost = tracking_cost
 
         self.t += 1
         terminated = (self.t >= self.episode_length)
         truncated = False
 
+        if terminated and self.terminal_linear_bonus and self.linear_tracking_cost is not None:
+            reward += self.terminal_linear_bonus_coef * (
+                self.linear_tracking_cost - tracking_cost
+            )
+        if terminated and self.terminal_z0_bonus and self.z0_tracking_cost is not None:
+            reward += (
+                self.terminal_z0_bonus_coef
+                * (self.z0_tracking_cost - tracking_cost)
+                / self.terminal_z0_bonus_scale
+            )
+
         obs = self._make_obs()
         info = {
             "success": success,
             "tracking_cost": tracking_cost,
+            "linear_tracking_cost": (
+                float(self.linear_tracking_cost)
+                if self.linear_tracking_cost is not None
+                else None
+            ),
+            "z0_tracking_cost": (
+                float(self.z0_tracking_cost) if self.z0_tracking_cost is not None else None
+            ),
             "accepted_steps": acc,
             "rejected_steps": rej,
             "total_step_attempts": attempts,

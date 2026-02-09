@@ -1,4 +1,4 @@
-# python3 scripts/opt_hc_path/bench_julia_bezier_univar.py --degree 20 --bezier-degree 3 --n-eval 10
+# python3 scripts/bezier_hc_ppo/bench_julia_bezier_univar.py --degree 20 --bezier-degree 3 --n-eval 10
 import time
 import numpy as np
 from juliacall import Main as jl
@@ -54,7 +54,7 @@ def main(degree=10, bezier_degree=4, n_eval=200, seed=0, compute_newton_iters=Fa
     )
 
     t0 = now()
-    jl.seval('include("scripts/opt_hc_path/bezier_univar.jl")')
+    jl.seval('include("scripts/bezier_hc_ppo/bezier_univar.jl")')
     t_include = now() - t0
 
     t1 = now()
