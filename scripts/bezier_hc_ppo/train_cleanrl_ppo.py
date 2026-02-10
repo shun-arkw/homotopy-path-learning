@@ -41,12 +41,6 @@ def main():
         dest="terminal_z0_bonus_coef",
     )
     parser.add_argument(
-        "--terminal-z0-bonus-scale",
-        type=float,
-        default=100.0,
-        dest="terminal_z0_bonus_scale",
-    )
-    parser.add_argument(
         "--step-reward-scale",
         type=float,
         default=1.0,
@@ -119,7 +113,6 @@ def main():
     os.environ["BH_TERMINAL_LINEAR_BONUS_COEF"] = str(args.terminal_linear_bonus_coef)
     os.environ["BH_TERMINAL_Z0_BONUS"] = "1" if args.terminal_z0_bonus else "0"
     os.environ["BH_TERMINAL_Z0_BONUS_COEF"] = str(args.terminal_z0_bonus_coef)
-    os.environ["BH_TERMINAL_Z0_BONUS_SCALE"] = str(args.terminal_z0_bonus_scale)
     os.environ["BH_STEP_REWARD_SCALE"] = str(args.step_reward_scale)
     os.environ["BH_REQUIRE_Z0_SUCCESS"] = "1" if args.require_z0_success else "0"
     os.environ["BH_Z0_MAX_TRIES"] = str(args.z0_max_tries)

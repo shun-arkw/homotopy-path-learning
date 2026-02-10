@@ -31,7 +31,6 @@ terminal_linear_bonus=true
 terminal_linear_bonus_coef=10.0 # 10.0, 20.0, 30,0
 terminal_z0_bonus=false # true
 terminal_z0_bonus_coef=2.0
-terminal_z0_bonus_scale=25.0
 step_reward_scale=0.2
 require_z0_success=true
 z0_max_tries=20
@@ -105,7 +104,6 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --terminal-linear-bonus-coef "$terminal_linear_bonus_coef" \
     $([ "$terminal_z0_bonus" = true ] && echo "--terminal-z0-bonus") \
     --terminal-z0-bonus-coef "$terminal_z0_bonus_coef" \
-    --terminal-z0-bonus-scale "$terminal_z0_bonus_scale" \
     --step-reward-scale "$step_reward_scale" \
     $([ "$require_z0_success" = true ] && echo "--require-z0-success") \
     --z0-max-tries "$z0_max_tries" \

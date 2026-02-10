@@ -31,7 +31,6 @@ def _env_kwargs_from_envvars() -> dict:
         terminal_linear_bonus_coef=float(os.environ.get("BH_TERMINAL_LINEAR_BONUS_COEF", "1.0")),
         terminal_z0_bonus=(os.environ.get("BH_TERMINAL_Z0_BONUS", "0") == "1"),
         terminal_z0_bonus_coef=float(os.environ.get("BH_TERMINAL_Z0_BONUS_COEF", "1.0")),
-        terminal_z0_bonus_scale=float(os.environ.get("BH_TERMINAL_Z0_BONUS_SCALE", "100.0")),
         step_reward_scale=float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
         require_z0_success=(os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1"),
         z0_max_tries=int(os.environ.get("BH_Z0_MAX_TRIES", "10")),

@@ -98,7 +98,6 @@ class BezierHomotopyUnivarEnv(gym.Env):
         terminal_linear_bonus_coef: float = 1.0,
         terminal_z0_bonus: bool = False,
         terminal_z0_bonus_coef: float = 1.0,
-        terminal_z0_bonus_scale: float = 100.0,
         step_reward_scale: float = 1.0,
         require_z0_success: bool = False,
         z0_max_tries: int = 10,
@@ -131,7 +130,6 @@ class BezierHomotopyUnivarEnv(gym.Env):
         self.terminal_linear_bonus_coef = float(terminal_linear_bonus_coef)
         self.terminal_z0_bonus = bool(terminal_z0_bonus)
         self.terminal_z0_bonus_coef = float(terminal_z0_bonus_coef)
-        self.terminal_z0_bonus_scale = float(terminal_z0_bonus_scale)
         self.step_reward_scale = float(step_reward_scale)
         self.require_z0_success = bool(require_z0_success)
         self.z0_max_tries = int(z0_max_tries)
@@ -474,10 +472,8 @@ class BezierHomotopyUnivarEnv(gym.Env):
                 self.linear_tracking_cost - tracking_cost
             )
         if terminated and self.terminal_z0_bonus and self.z0_tracking_cost is not None:
-            reward += (
-                self.terminal_z0_bonus_coef
-                * (self.z0_tracking_cost - tracking_cost)
-                / self.terminal_z0_bonus_scale
+            reward += self.terminal_z0_bonus_coef * (
+                self.z0_tracking_cost - tracking_cost
             )
 
         obs = self._make_obs()
