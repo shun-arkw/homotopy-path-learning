@@ -331,12 +331,14 @@ function init_bezier_univar(;
     starts = total_degree_start_solutions_univar(degree)
 
     opts = HomotopyContinuation.TrackerOptions(
+        automatic_differentiation = 1,
         max_steps = max_steps,
         max_step_size = max_step_size,
         max_initial_step_size = max_initial_step_size,
         min_step_size = min_step_size,
         min_rel_step_size = min_rel_step_size,
         extended_precision = extended_precision,
+        parameters = :fast,
     )
 
     tracker = HomotopyContinuation.Tracker(H; options=opts)

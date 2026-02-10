@@ -14,8 +14,8 @@ class BezierUnivarConfig:
     seed: int
     compute_newton_iters: bool = False
     max_steps: int = 50_000
-    max_step_size: float = 0.05
-    max_initial_step_size: float = 0.05
+    max_step_size: float = 0.05 # 0.05
+    max_initial_step_size: float = 0.05 # 0.05
     min_step_size: float = 1e-12
     min_rel_step_size: float = 1e-12
     extended_precision: bool = False
@@ -27,8 +27,8 @@ class LinearUnivarConfig:
     seed: int
     compute_newton_iters: bool = False
     max_steps: int = 50_000
-    max_step_size: float = 0.05
-    max_initial_step_size: float = 0.05
+    max_step_size: float = 0.05 # 0.05
+    max_initial_step_size: float = 0.05 # 0.05
     min_step_size: float = 1e-12
     min_rel_step_size: float = 1e-12
     extended_precision: bool = False

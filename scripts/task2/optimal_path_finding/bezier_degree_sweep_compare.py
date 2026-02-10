@@ -50,6 +50,13 @@ def main() -> None:
     # Julia measurement repetition
     parser.add_argument("--warmup-runs", type=int, default=0, help="Warm-up tracking runs (not measured) per path per degree.")
     parser.add_argument("--runs", type=int, default=1, help="Measured tracking runs per path per degree.")
+    parser.add_argument(
+        "--tracker-parameters",
+        type=str,
+        default="fast",
+        choices=["default", "conservative", "fast"],
+        help="Julia tracker parameter preset.",
+    )
 
     parser.add_argument("--out", type=str, default="", help="Optional JSON output path to save the sweep results.")
     args = parser.parse_args()
@@ -68,8 +75,8 @@ def main() -> None:
 
     # Endpoints: keep consistent with exp_bezier.py unless overridden by editing this file.
     # NOTE: These are tail coefficients for monic polynomial x^d + a_{d-1}x^{d-1}+...+a_0.
-    p_start = torch.tensor([-1000, -1, 2, 3, 1, 1, 4, 2, -2, -1], dtype=torch.complex128)
-    p_target = torch.tensor([1, -1, 2, 1, 5000, 1, -3, -1, 1, 2], dtype=torch.complex128)
+    p_start = torch.tensor([-1, -1+1j, 2, 3, 1, 1, 4, 2, -2, -1], dtype=torch.complex128)
+    p_target = torch.tensor([1, -1+1j, 2, 1, 5, 1, -3, -1, 1, 2], dtype=torch.complex128)
     M = 128
     loss_cfg = BezierLossConfig(
         samples_per_segment=int(M),
@@ -81,7 +88,7 @@ def main() -> None:
         disc_backend="complex",
         bezier_eval_method="casteljau",
         alpha=0,
-        beta=0.01,
+        beta=0,
     )
     optim_cfg = OptimConfig(lr=float(args.lr), steps=int(args.steps), print_every=0, grad_clip=1.0)
 
@@ -115,7 +122,7 @@ def main() -> None:
         return float(cl.detach().cpu().item())
 
     # Fixed Julia tracker options for fair comparison.
-    warmup_opts = JuliaTrackerOptions()
+    warmup_opts = JuliaTrackerOptions(parameters=str(args.tracker_parameters))
     meas_opts = JuliaTrackerOptions(
         max_steps=50000,
         max_step_size=0.05,
@@ -123,6 +130,7 @@ def main() -> None:
         min_step_size=1e-12,
         min_rel_step_size=1e-12,
         extended_precision=True,
+        parameters=str(args.tracker_parameters),
     )
 
     rows: list[dict] = []
@@ -133,7 +141,10 @@ def main() -> None:
     if jl is None:
         print("Julia: disabled (--no-julia)")
     else:
-        print(f"Julia: enabled, warmup_runs={int(args.warmup_runs)}, runs={int(args.runs)} (per path per degree)")
+        print(
+            f"Julia: enabled, warmup_runs={int(args.warmup_runs)}, runs={int(args.runs)} "
+            f"(per path per degree), tracker_parameters={args.tracker_parameters}"
+        )
 
     # Baseline evaluations (independent of Bezier degree).
     cl_linear = eval_bezier_condition_length(P_ctrl_linear)

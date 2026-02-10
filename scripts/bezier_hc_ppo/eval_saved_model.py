@@ -21,6 +21,8 @@ def _env_args(parser):
     parser.add_argument("--model-path", type=str, required=True, help="Path to .cleanrl_model")
     parser.add_argument("--num-instances", type=int, default=1024, dest="num_instances")
     parser.add_argument("--eval-seed", type=int, default=0, dest="eval_seed")
+    parser.add_argument("--top-k", type=int, default=1, dest="top_k", help="Number of top improvement (linear - Bezier) instances to report (default: 1)")
+    parser.add_argument("--worst-k", type=int, default=0, dest="worst_k", help="Number of worst improvement instances to report (0 = disabled, default: 0)")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--save-results", type=str, default=None, dest="save_results", help="Write JSON results to this path")
 
@@ -41,6 +43,12 @@ def _env_args(parser):
     parser.add_argument("--step-reward-scale", type=float, default=0.2, dest="step_reward_scale")
     parser.add_argument("--require-z0-success", action="store_true", dest="require_z0_success")
     parser.add_argument("--z0-max-tries", type=int, default=20, dest="z0_max_tries")
+    parser.add_argument(
+        "--hc-gamma-trick",
+        action="store_true",
+        dest="hc_gamma_trick",
+        help="Enable homotopy gamma trick (BH_GAMMA_TRICK=1).",
+    )
     parser.add_argument("--target-dist-real", type=str, default="uniform", dest="target_dist_real")
     parser.add_argument("--target-dist-imag", type=str, default="uniform", dest="target_dist_imag")
     parser.add_argument("--target-mean-real", type=float, default=0.0, dest="target_mean_real")
@@ -52,6 +60,14 @@ def _env_args(parser):
     parser.add_argument("--target-low-imag", type=float, default=-5, dest="target_low_imag")
     parser.add_argument("--target-high-imag", type=float, default=5, dest="target_high_imag")
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument(
+        "--compute-newton-iters",
+        type=str,
+        default="true",
+        choices=["true", "false"],
+        dest="compute_newton_iters",
+        help="Count Newton iterations: true (slower, reports total_newton_iterations_*), false (faster).",
+    )
 
 
 def set_env_from_args(args):
@@ -72,6 +88,7 @@ def set_env_from_args(args):
     os.environ.setdefault("BH_STEP_REWARD_SCALE", str(args.step_reward_scale))
     os.environ.setdefault("BH_REQUIRE_Z0_SUCCESS", "1" if args.require_z0_success else "0")
     os.environ.setdefault("BH_Z0_MAX_TRIES", str(args.z0_max_tries))
+    os.environ.setdefault("BH_GAMMA_TRICK", "1" if args.hc_gamma_trick else "0")
     os.environ.setdefault("BH_SEED", str(args.seed))
     os.environ.setdefault("BH_EXTENDED_PRECISION", "0")
     os.environ.setdefault("BH_TARGET_DIST_REAL", args.target_dist_real)
@@ -99,15 +116,24 @@ def _load_run_config(model_path: str) -> dict | None:
 def main():
     parser = argparse.ArgumentParser(description="Evaluate saved PPO model: Bezier vs linear (single gamma).")
     _env_args(parser)
+    # Get model_path first so we can load run config, then set config as parser defaults so CLI overrides
+    args_pre, _ = parser.parse_known_args()
+    run_config = _load_run_config(args_pre.model_path)
+    if run_config:
+        flat = {}
+        for key, value in run_config.items():
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    if hasattr(args_pre, k):
+                        flat[k] = v
+            elif hasattr(args_pre, key):
+                flat[key] = value
+        if flat:
+            parser.set_defaults(**flat)
     args = parser.parse_args()
 
-    # Override env args from run's config.json if present (avoids shape mismatch)
-    run_config = _load_run_config(args.model_path)
-    if run_config:
-        for key, value in run_config.items():
-            if hasattr(args, key):
-                setattr(args, key, value)
-
+    # Newton iteration counting (env reads BH_COMPUTE_NEWTON_ITERS on register)
+    os.environ["BH_COMPUTE_NEWTON_ITERS"] = "1" if (args.compute_newton_iters == "true") else "0"
     set_env_from_args(args)
 
     # Import after env vars so register_env sees them. Juliacall before torch to reduce segfault risk.
@@ -137,27 +163,81 @@ def main():
     instances = build_fixed_eval_instances(eval_env, args.num_instances, args.eval_seed)
     eval_env.unwrapped.set_fixed_instances(instances, reset_idx=True)
 
-    bezier = run_fixed_eval(eval_env, agent, device, args.num_instances)
+    bezier = run_fixed_eval(
+        eval_env, agent, device, args.num_instances, return_per_instance=True
+    )
     eval_env.unwrapped.set_fixed_instances(instances, reset_idx=True)
-    linear = run_linear_baseline_eval(eval_env, args.num_instances)
+    linear = run_linear_baseline_eval(
+        eval_env, args.num_instances, return_per_instance=True
+    )
+
+    # Aggregate stats for output (exclude per-instance lists from printed summary)
+    def _summary(d: dict):
+        exclude = {"total_step_attempts_list", "total_newton_iterations_list"}
+        return {k: v for k, v in (d or {}).items() if k not in exclude}
 
     out = {
         "model_path": args.model_path,
         "num_instances": args.num_instances,
         "eval_seed": args.eval_seed,
-        "bezier": bezier,
-        "linear": linear,
+        "bezier": _summary(bezier),
+        "linear": _summary(linear),
     }
 
     print("eval_saved_model (Bezier vs linear single-gamma)")
     print(f"  model_path = {args.model_path}")
     print(f"  num_instances = {args.num_instances}  eval_seed = {args.eval_seed}")
     print("  Bezier (policy):")
-    for k, v in (bezier or {}).items():
+    for k, v in (out["bezier"] or {}).items():
         print(f"    {k} = {v}")
     print("  Linear (single gamma):")
-    for k, v in (linear or {}).items():
+    for k, v in (out["linear"] or {}).items():
         print(f"    {k} = {v}")
+
+    # Improvement = linear - Bezier (positive = Bezier is better); top-k by improvement
+    if bezier and linear and "total_step_attempts_list" in bezier and "total_step_attempts_list" in linear:
+        blist = bezier["total_step_attempts_list"]
+        llist = linear["total_step_attempts_list"]
+        n = min(len(blist), len(llist))
+        if n > 0:
+            improvements = [llist[i] - blist[i] for i in range(n)]
+            k = max(1, min(args.top_k, n))
+            top_indices = sorted(range(n), key=lambda i: improvements[i], reverse=True)[:k]
+            top_k_list = [
+                {
+                    "rank": rank + 1,
+                    "instance_index": int(idx),
+                    "improvement_linear_minus_bezier": float(improvements[idx]),
+                    "bezier_total_step_attempts": float(blist[idx]),
+                    "linear_total_step_attempts": float(llist[idx]),
+                }
+                for rank, idx in enumerate(top_indices)
+            ]
+            out["top_k_improvement"] = top_k_list
+            if k == 1:
+                out["max_improvement"] = top_k_list[0]
+            print(f"  Top-{k} improvement (linear - Bezier) [largest gain for Bezier]:")
+            for rank, idx in enumerate(top_indices):
+                print(f"    rank = {rank + 1}  instance_index = {idx}  improvement = {improvements[idx]:.4f}  Bezier = {blist[idx]:.4f}  Linear = {llist[idx]:.4f}")
+
+            # Worst-k: smallest improvement (Bezier barely better or worse than Linear)
+            if args.worst_k > 0:
+                kw = min(args.worst_k, n)
+                worst_indices = sorted(range(n), key=lambda i: improvements[i])[:kw]
+                worst_k_list = [
+                    {
+                        "rank": rank + 1,
+                        "instance_index": int(idx),
+                        "improvement_linear_minus_bezier": float(improvements[idx]),
+                        "bezier_total_step_attempts": float(blist[idx]),
+                        "linear_total_step_attempts": float(llist[idx]),
+                    }
+                    for rank, idx in enumerate(worst_indices)
+                ]
+                out["worst_k_improvement"] = worst_k_list
+                print(f"  Top-{kw} worst improvement (linear - Bezier) [smallest gain or Bezier worse]:")
+                for rank, idx in enumerate(worst_indices):
+                    print(f"    rank = {rank + 1}  instance_index = {idx}  improvement = {improvements[idx]:.4f}  Bezier = {blist[idx]:.4f}  Linear = {llist[idx]:.4f}")
 
     if args.save_results:
         with open(args.save_results, "w") as f:

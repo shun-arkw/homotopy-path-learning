@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import numpy as np
 
@@ -19,6 +19,7 @@ class JuliaTrackerOptions:
     min_step_size: float = 1e-12
     min_rel_step_size: float = 1e-12
     extended_precision: bool = True
+    parameters: Literal["default", "conservative", "fast"] = "fast"
 
 
 class JuliaSegmentDetail(TypedDict):
@@ -552,6 +553,10 @@ end
 
 def _tracker_opts_to_julia(jl, opts: JuliaTrackerOptions):
     """Convert Python tracker options to a Julia HomotopyContinuation.TrackerOptions object."""
+    params = str(opts.parameters).strip().lower()
+    valid_params = {"default", "conservative", "fast"}
+    if params not in valid_params:
+        raise ValueError(f"Invalid tracker parameters '{opts.parameters}'. Must be one of {sorted(valid_params)}.")
     HC = jl.HomotopyContinuation
     return HC.TrackerOptions(
         max_steps=int(opts.max_steps),
@@ -560,6 +565,7 @@ def _tracker_opts_to_julia(jl, opts: JuliaTrackerOptions):
         min_step_size=float(opts.min_step_size),
         min_rel_step_size=float(opts.min_rel_step_size),
         extended_precision=bool(opts.extended_precision),
+        parameters=jl.Symbol(params),
     )
 
 
@@ -749,6 +755,7 @@ def track_piecewise_linear_julia(
                     "min_step_size": float(opts.min_step_size),
                     "min_rel_step_size": float(opts.min_rel_step_size),
                     "extended_precision": bool(opts.extended_precision),
+                    "parameters": str(opts.parameters),
                 },
                 "sum_steps": int(getattr(d, "sum_steps")),
                 "sum_accepted": int(getattr(d, "sum_accepted")),
@@ -934,6 +941,7 @@ def track_bezier_curve_julia(
                 "min_step_size": float(tracker_opts.min_step_size),
                 "min_rel_step_size": float(tracker_opts.min_rel_step_size),
                 "extended_precision": bool(tracker_opts.extended_precision),
+                "parameters": str(tracker_opts.parameters),
             },
             "sum_steps": int(getattr(out, "sum_steps")),
             "sum_accepted": int(getattr(out, "sum_accepted")),
@@ -1007,6 +1015,7 @@ def track_total_degree_julia(
                 "min_step_size": float(tracker_opts.min_step_size),
                 "min_rel_step_size": float(tracker_opts.min_rel_step_size),
                 "extended_precision": bool(tracker_opts.extended_precision),
+                "parameters": str(tracker_opts.parameters),
             },
             "sum_steps": int(getattr(out, "sum_steps")),
             "sum_accepted": int(getattr(out, "sum_accepted")),

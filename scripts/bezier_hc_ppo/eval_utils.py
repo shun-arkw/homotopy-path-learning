@@ -21,11 +21,15 @@ def run_fixed_eval(
     device,
     num_instances: int,
     force_action_zero: bool = False,
+    return_per_instance: bool = False,
 ) -> dict:
-    """Run policy (agent) on fixed eval instances; return mean metrics dict."""
+    """Run policy (agent) on fixed eval instances; return mean metrics dict.
+    If return_per_instance=True, adds "total_step_attempts_list" and "total_newton_iterations_list" to the returned dict.
+    """
     successes = []
     tracking_costs = []
     total_attempts = []
+    total_newton_iters = []
     accepted_steps = []
     rejected_steps = []
     zero_action = None
@@ -52,24 +56,49 @@ def run_fixed_eval(
                 successes.append(float(last_info.get("success", 0.0)))
                 tracking_costs.append(float(last_info.get("tracking_cost", 0.0)))
                 total_attempts.append(float(last_info.get("total_step_attempts", 0.0)))
+                total_newton_iters.append(float(last_info.get("total_newton_iterations", 0.0)))
                 accepted_steps.append(float(last_info.get("accepted_steps", 0.0)))
                 rejected_steps.append(float(last_info.get("rejected_steps", 0.0)))
     if not successes:
         return {}
-    return {
+    total_attempts_arr = np.array(total_attempts, dtype=np.float64)
+    out = {
         "success_rate": float(np.mean(successes)),
         "tracking_cost_mean": float(np.mean(tracking_costs)),
         "total_step_attempts_mean": float(np.mean(total_attempts)),
+        "total_step_attempts_median": float(np.median(total_attempts_arr)),
+        "total_step_attempts_min": float(np.min(total_attempts_arr)),
+        "total_step_attempts_max": float(np.max(total_attempts_arr)),
+        "total_step_attempts_std": float(np.std(total_attempts_arr)),
+        "total_step_attempts_var": float(np.var(total_attempts_arr)),
         "accepted_steps_mean": float(np.mean(accepted_steps)),
         "rejected_steps_mean": float(np.mean(rejected_steps)),
     }
+    if total_newton_iters:
+        newton_arr = np.array(total_newton_iters, dtype=np.float64)
+        out["total_newton_iterations_mean"] = float(np.mean(total_newton_iters))
+        out["total_newton_iterations_median"] = float(np.median(newton_arr))
+        out["total_newton_iterations_min"] = float(np.min(newton_arr))
+        out["total_newton_iterations_max"] = float(np.max(newton_arr))
+        out["total_newton_iterations_std"] = float(np.std(newton_arr))
+        out["total_newton_iterations_var"] = float(np.var(newton_arr))
+    if return_per_instance:
+        out["total_step_attempts_list"] = list(total_attempts)
+        if total_newton_iters:
+            out["total_newton_iterations_list"] = list(total_newton_iters)
+    return out
 
 
-def run_linear_baseline_eval(eval_env, num_instances: int) -> dict:
-    """Run linear-path baseline via Julia linear homotopy; return mean metrics dict."""
+def run_linear_baseline_eval(
+    eval_env, num_instances: int, return_per_instance: bool = False
+) -> dict:
+    """Run linear-path baseline via Julia linear homotopy; return mean metrics dict.
+    If return_per_instance=True, adds "total_step_attempts_list" and "total_newton_iterations_list" to the returned dict.
+    """
     successes = []
     tracking_costs = []
     total_attempts = []
+    total_newton_iters = []
     accepted_steps = []
     rejected_steps = []
     base_env = eval_env.unwrapped
@@ -100,6 +129,7 @@ def run_linear_baseline_eval(eval_env, num_instances: int) -> dict:
         acc = int(out.total_accepted_steps)
         rej = int(out.total_rejected_steps)
         attempts = int(out.total_step_attempts)
+        newton_iters = int(getattr(out, "total_newton_iterations", 0))
         if success:
             tracking_cost = float(acc + base_env.rho * rej)
         else:
@@ -108,14 +138,34 @@ def run_linear_baseline_eval(eval_env, num_instances: int) -> dict:
         successes.append(float(success))
         tracking_costs.append(tracking_cost)
         total_attempts.append(float(attempts))
+        total_newton_iters.append(float(newton_iters))
         accepted_steps.append(float(acc))
         rejected_steps.append(float(rej))
     if not successes:
         return {}
-    return {
+    total_attempts_arr = np.array(total_attempts, dtype=np.float64)
+    out = {
         "success_rate": float(np.mean(successes)),
         "tracking_cost_mean": float(np.mean(tracking_costs)),
         "total_step_attempts_mean": float(np.mean(total_attempts)),
+        "total_step_attempts_median": float(np.median(total_attempts_arr)),
+        "total_step_attempts_min": float(np.min(total_attempts_arr)),
+        "total_step_attempts_max": float(np.max(total_attempts_arr)),
+        "total_step_attempts_std": float(np.std(total_attempts_arr)),
+        "total_step_attempts_var": float(np.var(total_attempts_arr)),
         "accepted_steps_mean": float(np.mean(accepted_steps)),
         "rejected_steps_mean": float(np.mean(rejected_steps)),
     }
+    if total_newton_iters:
+        newton_arr = np.array(total_newton_iters, dtype=np.float64)
+        out["total_newton_iterations_mean"] = float(np.mean(total_newton_iters))
+        out["total_newton_iterations_median"] = float(np.median(newton_arr))
+        out["total_newton_iterations_min"] = float(np.min(newton_arr))
+        out["total_newton_iterations_max"] = float(np.max(newton_arr))
+        out["total_newton_iterations_std"] = float(np.std(newton_arr))
+        out["total_newton_iterations_var"] = float(np.var(newton_arr))
+    if return_per_instance:
+        out["total_step_attempts_list"] = list(total_attempts)
+        if total_newton_iters:
+            out["total_newton_iterations_list"] = list(total_newton_iters)
+    return out

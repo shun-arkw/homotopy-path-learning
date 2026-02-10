@@ -64,6 +64,12 @@ def main():
         default=10,
         dest="z0_max_tries",
     )
+    parser.add_argument(
+        "--hc-gamma-trick",
+        action="store_true",
+        dest="hc_gamma_trick",
+        help="Enable homotopy gamma trick (BH_GAMMA_TRICK=1).",
+    )
     parser.add_argument("--seed", type=int, default=0)
 
     # TargetCoeffConfig: sampling of target polynomial coefficients
@@ -117,6 +123,7 @@ def main():
     os.environ["BH_STEP_REWARD_SCALE"] = str(args.step_reward_scale)
     os.environ["BH_REQUIRE_Z0_SUCCESS"] = "1" if args.require_z0_success else "0"
     os.environ["BH_Z0_MAX_TRIES"] = str(args.z0_max_tries)
+    os.environ["BH_GAMMA_TRICK"] = "1" if args.hc_gamma_trick else "0"
     os.environ["BH_SEED"] = str(args.seed)
     os.environ["BH_EXTENDED_PRECISION"] = "0"
     # TargetCoeffConfig

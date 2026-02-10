@@ -181,6 +181,7 @@ function init_linear_univar(;
         min_step_size = min_step_size,
         min_rel_step_size = min_rel_step_size,
         extended_precision = extended_precision,
+        parameters = :fast,
     )
 
     tracker = HomotopyContinuation.Tracker(H; options=opts)

@@ -102,6 +102,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
         step_reward_scale: float = 1.0,
         require_z0_success: bool = False,
         z0_max_tries: int = 10,
+        gamma_trick: bool = True,
         seed: int = 0,
         extended_precision: bool = False,
         compute_newton_iters: bool = False,  # Prefer False during training
@@ -134,6 +135,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
         self.step_reward_scale = float(step_reward_scale)
         self.require_z0_success = bool(require_z0_success)
         self.z0_max_tries = int(z0_max_tries)
+        self.gamma_trick = bool(gamma_trick)
 
         self.seed0 = int(seed)
         self.rng = np.random.default_rng(self.seed0)
@@ -223,7 +225,11 @@ class BezierHomotopyUnivarEnv(gym.Env):
         start_coeffs[0] = -1.0 + 0.0j
         start_coeffs[deg] = 1.0 + 0.0j
 
-        # Gamma: exp(i theta)
+        # Gamma: exp(i theta) when gamma_trick else 1
+        if not self.gamma_trick:
+            gamma = 1.0 + 0.0j
+            return ProblemInstance(start_coeffs=start_coeffs, target_coeffs=target_coeffs, gamma=gamma)
+
         def _sample_gamma() -> complex:
             theta = float(self.rng.uniform(0.0, 2.0 * np.pi))
             return np.cos(theta) + 1j * np.sin(theta)
@@ -444,6 +450,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
         acc = int(out.total_accepted_steps)
         rej = int(out.total_rejected_steps)
         attempts = int(out.total_step_attempts)
+        newton_iters = int(getattr(out, "total_newton_iterations", 0))
 
         # Tracking cost
         if success:
@@ -488,6 +495,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
             "accepted_steps": acc,
             "rejected_steps": rej,
             "total_step_attempts": attempts,
+            "total_newton_iterations": newton_iters,
             "runtime_sec": float(out.runtime_sec),
             "tracking_time_sec": float(out.tracking_time_sec),
             "norm_z": float(np.linalg.norm(self.z)),

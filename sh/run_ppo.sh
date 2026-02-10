@@ -11,7 +11,8 @@
 # 2. TargetCoeffConfig             - target polynomial coefficient sampling
 # 3. PPO parameters                - total_timesteps, num_steps, learning_rate, etc.
 # 4. Eval & logging                - eval_interval, eval_num_instances, wandb
-# 5. Run training                  - Execute train_cleanrl_ppo.py
+# 5. Result directory / timezone   - output layout and run timestamp timezone
+# 6. Run training                  - Execute train_cleanrl_ppo.py
 # =============================================================================
 
 
@@ -27,13 +28,14 @@ failure_penalty=3000
 rho=1.0
 seed=0
 terminal_linear_bonus=true
-terminal_linear_bonus_coef=10.0
-terminal_z0_bonus=true
+terminal_linear_bonus_coef=10.0 # 10.0, 20.0, 30,0
+terminal_z0_bonus=false # true
 terminal_z0_bonus_coef=2.0
 terminal_z0_bonus_scale=25.0
 step_reward_scale=0.2
 require_z0_success=true
 z0_max_tries=20
+hc_gamma_trick=false
 
 # =============================================================================
 # 2. TARGET COEFF CONFIG (sampling of target polynomial coefficients)
@@ -52,7 +54,7 @@ target_high_imag=5
 # =============================================================================
 # 3. PPO PARAMETERS
 # =============================================================================
-total_timesteps=1000000
+total_timesteps=1000000 # 1000000
 num_steps=2048
 num_envs=1
 learning_rate=0.0003
@@ -70,13 +72,26 @@ eval_seed=0
 eval_linear_baseline=true
 eval_zero_action=true
 save_model=true
-save_dir="runs"
 track=false
 wandb_project_name="BezierHomotopyUnivar-PPO"
 wandb_entity=""
 
 # =============================================================================
-# 5. RUN TRAINING
+# 5. RESULT DIRECTORY / TIMEZONE
+# =============================================================================
+# Timezone used by ppo_continuous_action.py to generate run names.
+# Examples: Europe/Paris, Asia/Tokyo, UTC
+run_tz="${RUN_TZ:-Europe/Paris}"
+export RUN_TZ="$run_tz"
+
+# Save runs under: result/degree{d}_bezier{b}_ep{t}/run_YYYYMMDD_HHMMSS
+result_root="results/bezier_ppo/univar"
+setting_tag="degree${degree}_bezier${bezier_degree}_ep${episode_len}"
+save_dir="${result_root}/${setting_tag}"
+mkdir -p "$save_dir"
+
+# =============================================================================
+# 6. RUN TRAINING
 # =============================================================================
 python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --degree "$degree" \
@@ -94,6 +109,7 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --step-reward-scale "$step_reward_scale" \
     $([ "$require_z0_success" = true ] && echo "--require-z0-success") \
     --z0-max-tries "$z0_max_tries" \
+    $([ "$hc_gamma_trick" = true ] && echo "--hc-gamma-trick") \
     --seed "$seed" \
     --target-dist-real "$target_dist_real" \
     --target-dist-imag "$target_dist_imag" \

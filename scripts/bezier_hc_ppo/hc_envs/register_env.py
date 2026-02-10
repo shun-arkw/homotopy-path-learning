@@ -35,9 +35,10 @@ def _env_kwargs_from_envvars() -> dict:
         step_reward_scale=float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
         require_z0_success=(os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1"),
         z0_max_tries=int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
+        gamma_trick=(os.environ.get("BH_GAMMA_TRICK", "1") == "1"),
         seed=int(os.environ.get("BH_SEED", "0")),
         extended_precision=(os.environ.get("BH_EXTENDED_PRECISION", "0") == "1"),
-        compute_newton_iters=False,  # Keep False during training
+        compute_newton_iters=(os.environ.get("BH_COMPUTE_NEWTON_ITERS", "0") == "1"),
         include_progress_features=True,
         f_coeff_config=f_coeff_config,
     )

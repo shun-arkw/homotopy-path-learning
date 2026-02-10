@@ -5,6 +5,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 # Import juliacall before torch to reduce segfault risk.
 from juliacall import Main as _jl  # noqa: F401
@@ -23,6 +24,11 @@ from eval_utils import (
     run_fixed_eval,
     run_linear_baseline_eval,
 )
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 
 @dataclass
@@ -179,7 +185,21 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_tz = os.environ.get("RUN_TZ", "Europe/Paris")
+    if ZoneInfo is None:
+        logging.warning("zoneinfo is unavailable; using local time for run naming.")
+        run_dt = datetime.now()
+        run_tz_label = "local"
+    else:
+        try:
+            run_dt = datetime.now(ZoneInfo(run_tz))
+            run_tz_label = run_tz
+        except Exception:
+            logging.warning(f"Invalid RUN_TZ='{run_tz}'. Falling back to local time.")
+            run_dt = datetime.now()
+            run_tz_label = "local"
+    run_name = f"run_{run_dt.strftime('%Y%m%d_%H%M%S')}"
+    logging.info(f"run_name={run_name} (timezone={run_tz_label})")
 
     if args.track:
         import wandb
@@ -223,6 +243,7 @@ if __name__ == "__main__":
     eval_env = None
     eval_instances = None
     linear_baseline_done = False
+    eval_z0_done = False
     if args.eval_interval > 0 and args.eval_num_instances > 0:
         eval_env = make_env(args.env_id, 0, False, run_name, args.gamma)()
         eval_instances = build_fixed_eval_instances(eval_env, args.eval_num_instances, args.eval_seed)
@@ -435,7 +456,7 @@ if __name__ == "__main__":
                     f"tracking_cost_mean={eval_metrics['tracking_cost_mean']:.3f} | "
                     f"total_step_attempts_mean={eval_metrics['total_step_attempts_mean']:.1f}"
                 )
-            if args.eval_zero_action:
+            if args.eval_zero_action and not eval_z0_done:
                 if eval_instances is not None:
                     eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
                 eval_z0_metrics = run_fixed_eval(
@@ -476,6 +497,7 @@ if __name__ == "__main__":
                         f"tracking_cost_mean={eval_z0_metrics['tracking_cost_mean']:.3f} | "
                         f"total_step_attempts_mean={eval_z0_metrics['total_step_attempts_mean']:.1f}"
                     )
+                eval_z0_done = True
             if args.eval_linear_baseline and not linear_baseline_done:
                 if eval_instances is not None:
                     eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
@@ -505,39 +527,65 @@ if __name__ == "__main__":
         model_path = os.path.join(run_dir, f"{args.exp_name}.cleanrl_model")
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
-        # Save env config so eval can build the same obs/action space
-        env_config = {
-            "degree": int(os.environ.get("BH_DEGREE", "10")),
-            "bezier_degree": int(os.environ.get("BH_BEZIER_DEGREE", "2")),
-            "latent_dim": int(os.environ.get("BH_M", "8")),
-            "episode_len": int(os.environ.get("BH_T", "8")),
-            "alpha_z": float(os.environ.get("BH_ALPHA_Z", "2.0")),
-            "failure_penalty": float(os.environ.get("BH_FAILURE_PENALTY", "1000000")),
-            "rho": float(os.environ.get("BH_RHO_REJECT", "1.0")),
-            "seed": int(os.environ.get("BH_SEED", "0")),
-            "terminal_linear_bonus": os.environ.get("BH_TERMINAL_LINEAR_BONUS", "0") == "1",
-            "terminal_linear_bonus_coef": float(os.environ.get("BH_TERMINAL_LINEAR_BONUS_COEF", "1.0")),
-            "terminal_z0_bonus": os.environ.get("BH_TERMINAL_Z0_BONUS", "0") == "1",
-            "terminal_z0_bonus_coef": float(os.environ.get("BH_TERMINAL_Z0_BONUS_COEF", "1.0")),
-            "terminal_z0_bonus_scale": float(os.environ.get("BH_TERMINAL_Z0_BONUS_SCALE", "100.0")),
-            "step_reward_scale": float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
-            "require_z0_success": os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1",
-            "z0_max_tries": int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
-            "target_dist_real": os.environ.get("BH_TARGET_DIST_REAL", "gaussian"),
-            "target_dist_imag": os.environ.get("BH_TARGET_DIST_IMAG", "gaussian"),
-            "target_mean_real": float(os.environ.get("BH_TARGET_MEAN_REAL", "0.0")),
-            "target_mean_imag": float(os.environ.get("BH_TARGET_MEAN_IMAG", "0.0")),
-            "target_std_real": float(os.environ.get("BH_TARGET_STD_REAL", "0.5")),
-            "target_std_imag": float(os.environ.get("BH_TARGET_STD_IMAG", "0.5")),
-            "target_low_real": float(os.environ.get("BH_TARGET_LOW_REAL", "-0.5")),
-            "target_high_real": float(os.environ.get("BH_TARGET_HIGH_REAL", "0.5")),
-            "target_low_imag": float(os.environ.get("BH_TARGET_LOW_IMAG", "-0.5")),
-            "target_high_imag": float(os.environ.get("BH_TARGET_HIGH_IMAG", "0.5")),
-            "gamma": args.gamma,
+        # Save full experiment config in nested structure (env, target_coeff, ppo, eval_logging)
+        hc_gamma_trick = os.environ.get("BH_GAMMA_TRICK", "1") == "1"
+        config = {
+            "env": {
+                "degree": int(os.environ.get("BH_DEGREE", "10")),
+                "bezier_degree": int(os.environ.get("BH_BEZIER_DEGREE", "2")),
+                "latent_dim": int(os.environ.get("BH_M", "8")),
+                "episode_len": int(os.environ.get("BH_T", "8")),
+                "alpha_z": float(os.environ.get("BH_ALPHA_Z", "2.0")),
+                "failure_penalty": float(os.environ.get("BH_FAILURE_PENALTY", "1000000")),
+                "rho": float(os.environ.get("BH_RHO_REJECT", "1.0")),
+                "seed": int(os.environ.get("BH_SEED", "0")),
+                "terminal_linear_bonus": os.environ.get("BH_TERMINAL_LINEAR_BONUS", "0") == "1",
+                "terminal_linear_bonus_coef": float(os.environ.get("BH_TERMINAL_LINEAR_BONUS_COEF", "1.0")),
+                "terminal_z0_bonus": os.environ.get("BH_TERMINAL_Z0_BONUS", "0") == "1",
+                "terminal_z0_bonus_coef": float(os.environ.get("BH_TERMINAL_Z0_BONUS_COEF", "1.0")),
+                "terminal_z0_bonus_scale": float(os.environ.get("BH_TERMINAL_Z0_BONUS_SCALE", "100.0")),
+                "step_reward_scale": float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
+                "require_z0_success": os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1",
+                "z0_max_tries": int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
+                "hc_gamma_trick": hc_gamma_trick,
+            },
+            "target_coeff": {
+                "target_dist_real": os.environ.get("BH_TARGET_DIST_REAL", "gaussian"),
+                "target_dist_imag": os.environ.get("BH_TARGET_DIST_IMAG", "gaussian"),
+                "target_mean_real": float(os.environ.get("BH_TARGET_MEAN_REAL", "0.0")),
+                "target_mean_imag": float(os.environ.get("BH_TARGET_MEAN_IMAG", "0.0")),
+                "target_std_real": float(os.environ.get("BH_TARGET_STD_REAL", "0.5")),
+                "target_std_imag": float(os.environ.get("BH_TARGET_STD_IMAG", "0.5")),
+                "target_low_real": float(os.environ.get("BH_TARGET_LOW_REAL", "-0.5")),
+                "target_high_real": float(os.environ.get("BH_TARGET_HIGH_REAL", "0.5")),
+                "target_low_imag": float(os.environ.get("BH_TARGET_LOW_IMAG", "-0.5")),
+                "target_high_imag": float(os.environ.get("BH_TARGET_HIGH_IMAG", "0.5")),
+            },
+            "ppo": {
+                "gamma": args.gamma,
+                "total_timesteps": args.total_timesteps,
+                "num_steps": args.num_steps,
+                "num_envs": args.num_envs,
+                "learning_rate": args.learning_rate,
+                "update_epochs": args.update_epochs,
+                "num_minibatches": args.num_minibatches,
+                "gae_lambda": args.gae_lambda,
+            },
+            "eval_logging": {
+                "eval_interval": args.eval_interval,
+                "eval_num_instances": args.eval_num_instances,
+                "eval_seed": args.eval_seed,
+                "eval_linear_baseline": args.eval_linear_baseline,
+                "eval_zero_action": args.eval_zero_action,
+                "save_model": args.save_model,
+                "track": args.track,
+                "wandb_project_name": args.wandb_project_name or "",
+                "wandb_entity": args.wandb_entity or "",
+            },
         }
         config_path = os.path.join(run_dir, "config.json")
         with open(config_path, "w") as f:
-            json.dump(env_config, f, indent=2)
+            json.dump(config, f, indent=2)
         print(f"config saved to {config_path}")
 
     envs.close()
