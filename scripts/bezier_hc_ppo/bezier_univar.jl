@@ -323,7 +323,13 @@ function init_bezier_univar(;
     max_step_size::Float64 = 0.05,
     max_initial_step_size::Float64 = 0.05,
     min_step_size::Float64 = 1e-12,
-    min_rel_step_size::Float64 = 1e-12,
+    # HC TrackerParameters (shared with linear_univar.jl)
+    hc_a::Float64 = 0.125,              # a              (default=0.125, fast=0.125, conservative=0.125)
+    hc_beta_a::Float64 = 1.0,           # β_a            (default=1.0,   fast=1.0,   conservative=1.0)
+    hc_beta_omega_p::Float64 = 0.8,     # β_ω_p          (default=3.0,   fast=2.0,   conservative=4.0)
+    hc_beta_tau::Float64 = 0.85,        # β_τ            (default=0.4,   fast=0.75,  conservative=0.25)
+    hc_strict_beta_tau::Float64 = 0.8,  # strict_β_τ     (default=0.3,   fast=0.4,   conservative=0.1875)
+    hc_min_newton_iters::Int = 1,      # min_newton_iters (default=2,   fast=2,     conservative=2)
 )
     Random.seed!(seed)
 
@@ -331,12 +337,12 @@ function init_bezier_univar(;
     starts = total_degree_start_solutions_univar(degree)
 
     p_custom = HomotopyContinuation.TrackerParameters(
-        0.125,  # a              (default=0.125, fast=0.125, conservative=0.125)
-        1.0,    # β_a            (default=1.0,   fast=1.0,   conservative=1.0)
-        0.8,    # β_ω_p          (default=3.0,   fast=2.0,   conservative=4.0)
-        0.85,   # β_τ            (default=0.4,   fast=0.75,  conservative=0.25)
-        0.8,   # strict_β_τ     (default=0.3,   fast=0.4,   conservative=0.1875)
-        1,      # min_newton_iters (default=2,   fast=2,     conservative=2)
+        hc_a,
+        hc_beta_a,
+        hc_beta_omega_p,
+        hc_beta_tau,
+        hc_strict_beta_tau,
+        hc_min_newton_iters,
     )
 
     opts = HomotopyContinuation.TrackerOptions(
@@ -345,7 +351,6 @@ function init_bezier_univar(;
         max_step_size = max_step_size,
         max_initial_step_size = max_initial_step_size,
         min_step_size = min_step_size,
-        min_rel_step_size = min_rel_step_size,
         extended_precision = extended_precision,
         parameters = p_custom,
     )

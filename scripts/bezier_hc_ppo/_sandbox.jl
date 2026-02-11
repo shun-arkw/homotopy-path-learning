@@ -16,7 +16,6 @@ function test_track_only_bezier_univar()
         max_step_size=0.05,
         max_initial_step_size=0.05,
         min_step_size=1e-12,
-        min_rel_step_size=1e-12,
         extended_precision=false,
     )
 

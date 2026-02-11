@@ -527,7 +527,7 @@ if __name__ == "__main__":
         model_path = os.path.join(run_dir, f"{args.exp_name}.cleanrl_model")
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
-        # Save full experiment config in nested structure (env, target_coeff, ppo, eval_logging)
+        # Save full experiment config (env, hc_tracker, target_coeff, ppo, eval_logging)
         hc_gamma_trick = os.environ.get("BH_GAMMA_TRICK", "1") == "1"
         config = {
             "env": {
@@ -547,6 +547,21 @@ if __name__ == "__main__":
                 "require_z0_success": os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1",
                 "z0_max_tries": int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
                 "hc_gamma_trick": hc_gamma_trick,
+            },
+            "hc_tracker_params": {
+                "hc_a": float(os.environ.get("BH_HC_A", "0.125")),
+                "hc_beta_a": float(os.environ.get("BH_HC_BETA_A", "1.0")),
+                "hc_beta_omega_p": float(os.environ.get("BH_HC_BETA_OMEGA_P", "0.8")),
+                "hc_beta_tau": float(os.environ.get("BH_HC_BETA_TAU", "0.85")),
+                "hc_strict_beta_tau": float(os.environ.get("BH_HC_STRICT_BETA_TAU", "0.8")),
+                "hc_min_newton_iters": int(os.environ.get("BH_HC_MIN_NEWTON_ITERS", "1")),
+            },
+            "hc_tracker_options": {
+                "hc_max_steps": int(os.environ.get("BH_HC_MAX_STEPS", "50000")),
+                "hc_max_step_size": os.environ.get("BH_HC_MAX_STEP_SIZE", "inf"),
+                "hc_max_initial_step_size": os.environ.get("BH_HC_MAX_INITIAL_STEP_SIZE", "inf"),
+                "hc_min_step_size": float(os.environ.get("BH_HC_MIN_STEP_SIZE", "1e-12")),
+                "hc_extended_precision": os.environ.get("BH_HC_EXTENDED_PRECISION", "0") == "1",
             },
             "target_coeff": {
                 "target_dist_real": os.environ.get("BH_TARGET_DIST_REAL", "gaussian"),

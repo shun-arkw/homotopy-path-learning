@@ -110,6 +110,19 @@ class BezierHomotopyUnivarEnv(gym.Env):
         fixed_instances: Optional[Sequence[ProblemInstance]] = None,
         # Advanced: you can override the Julia include expression if needed
         julia_include_seval: str = 'include("scripts/bezier_hc_ppo/bezier_univar.jl")',
+        # HC TrackerParameters (shared linear/bezier): a, β_a, β_ω_p, β_τ, strict_β_τ, min_newton_iters
+        hc_a: float = 0.125,
+        hc_beta_a: float = 1.0,
+        hc_beta_omega_p: float = 0.8,
+        hc_beta_tau: float = 0.85,
+        hc_strict_beta_tau: float = 0.8,
+        hc_min_newton_iters: int = 1,
+        # HC TrackerOptions (shared linear/bezier)
+        hc_max_steps: int = 50_000,
+        hc_max_step_size: float = float("inf"),
+        hc_max_initial_step_size: float = float("inf"),
+        hc_min_step_size: float = 1e-12,
+        hc_extended_precision: bool = False,
     ):
         super().__init__()
         assert bezier_degree in (2, 3), "Only bezier_degree=2 or 3 is supported."
@@ -142,6 +155,17 @@ class BezierHomotopyUnivarEnv(gym.Env):
 
         self.extended_precision = bool(extended_precision)
         self.compute_newton_iters = bool(compute_newton_iters)
+        self.hc_a = float(hc_a)
+        self.hc_beta_a = float(hc_beta_a)
+        self.hc_beta_omega_p = float(hc_beta_omega_p)
+        self.hc_beta_tau = float(hc_beta_tau)
+        self.hc_strict_beta_tau = float(hc_strict_beta_tau)
+        self.hc_min_newton_iters = int(hc_min_newton_iters)
+        self.hc_max_steps = int(hc_max_steps)
+        self.hc_max_step_size = float(hc_max_step_size)
+        self.hc_max_initial_step_size = float(hc_max_initial_step_size)
+        self.hc_min_step_size = float(hc_min_step_size)
+        self.hc_extended_precision = bool(hc_extended_precision)
 
         # Get a process-wide backend and include Julia definitions exactly once.
         self.backend = get_backend(include_path=julia_include_seval)
@@ -151,7 +175,17 @@ class BezierHomotopyUnivarEnv(gym.Env):
             bezier_degree=self.bezier_degree,
             seed=self.seed0,
             compute_newton_iters=self.compute_newton_iters,
-            extended_precision=self.extended_precision,
+            extended_precision=self.hc_extended_precision,
+            max_steps=self.hc_max_steps,
+            max_step_size=self.hc_max_step_size,
+            max_initial_step_size=self.hc_max_initial_step_size,
+            min_step_size=self.hc_min_step_size,
+            hc_a=self.hc_a,
+            hc_beta_a=self.hc_beta_a,
+            hc_beta_omega_p=self.hc_beta_omega_p,
+            hc_beta_tau=self.hc_beta_tau,
+            hc_strict_beta_tau=self.hc_strict_beta_tau,
+            hc_min_newton_iters=self.hc_min_newton_iters,
         )
         self.backend.ensure_ready(backend_cfg)
         if self.terminal_linear_bonus:
@@ -159,7 +193,17 @@ class BezierHomotopyUnivarEnv(gym.Env):
                 degree=self.degree,
                 seed=self.seed0,
                 compute_newton_iters=self.compute_newton_iters,
-                extended_precision=self.extended_precision,
+                extended_precision=self.hc_extended_precision,
+                max_steps=self.hc_max_steps,
+                max_step_size=self.hc_max_step_size,
+                max_initial_step_size=self.hc_max_initial_step_size,
+                min_step_size=self.hc_min_step_size,
+                hc_a=self.hc_a,
+                hc_beta_a=self.hc_beta_a,
+                hc_beta_omega_p=self.hc_beta_omega_p,
+                hc_beta_tau=self.hc_beta_tau,
+                hc_strict_beta_tau=self.hc_strict_beta_tau,
+                hc_min_newton_iters=self.hc_min_newton_iters,
             )
             self.backend.ensure_ready_linear(linear_cfg)
 

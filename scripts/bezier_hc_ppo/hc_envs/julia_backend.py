@@ -14,11 +14,17 @@ class BezierUnivarConfig:
     seed: int
     compute_newton_iters: bool = False
     max_steps: int = 50_000
-    max_step_size: float = MAX_STEP_SIZE # 0.05
-    max_initial_step_size: float = MAX_STEP_SIZE # 0.05
+    max_step_size: float = MAX_STEP_SIZE 
+    max_initial_step_size: float = MAX_STEP_SIZE 
     min_step_size: float = 1e-12
-    min_rel_step_size: float = 1e-12
     extended_precision: bool = False
+    # HC TrackerParameters (shared with LinearUnivarConfig)
+    hc_a: float = 0.125
+    hc_beta_a: float = 1.0
+    hc_beta_omega_p: float = 0.8
+    hc_beta_tau: float = 0.85
+    hc_strict_beta_tau: float = 0.8
+    hc_min_newton_iters: int = 1
 
 
 @dataclass(frozen=True)
@@ -27,11 +33,17 @@ class LinearUnivarConfig:
     seed: int
     compute_newton_iters: bool = False
     max_steps: int = 50_000
-    max_step_size: float = MAX_STEP_SIZE # 0.05
-    max_initial_step_size: float = MAX_STEP_SIZE # 0.05
+    max_step_size: float = MAX_STEP_SIZE 
+    max_initial_step_size: float = MAX_STEP_SIZE 
     min_step_size: float = 1e-12
-    min_rel_step_size: float = 1e-12
     extended_precision: bool = False
+    # HC TrackerParameters (shared with BezierUnivarConfig)
+    hc_a: float = 0.125
+    hc_beta_a: float = 1.0
+    hc_beta_omega_p: float = 0.8
+    hc_beta_tau: float = 0.85
+    hc_strict_beta_tau: float = 0.8
+    hc_min_newton_iters: int = 1
 
 
 class JuliaBackend:
@@ -47,7 +59,22 @@ class JuliaBackend:
         self._ready_linear: Dict[Tuple[int, bool, bool], bool] = {}
 
     def ensure_ready(self, cfg: BezierUnivarConfig, warmup_ctrl: Optional[np.ndarray] = None) -> None:
-        key = (cfg.degree, cfg.bezier_degree, cfg.extended_precision, cfg.compute_newton_iters)
+        key = (
+            cfg.degree,
+            cfg.bezier_degree,
+            cfg.extended_precision,
+            cfg.compute_newton_iters,
+            cfg.max_steps,
+            cfg.max_step_size,
+            cfg.max_initial_step_size,
+            cfg.min_step_size,
+            cfg.hc_a,
+            cfg.hc_beta_a,
+            cfg.hc_beta_omega_p,
+            cfg.hc_beta_tau,
+            cfg.hc_strict_beta_tau,
+            cfg.hc_min_newton_iters,
+        )
         if self._ready.get(key, False):
             return
 
@@ -62,7 +89,12 @@ class JuliaBackend:
             max_step_size=float(cfg.max_step_size),
             max_initial_step_size=float(cfg.max_initial_step_size),
             min_step_size=float(cfg.min_step_size),
-            min_rel_step_size=float(cfg.min_rel_step_size),
+            hc_a=float(cfg.hc_a),
+            hc_beta_a=float(cfg.hc_beta_a),
+            hc_beta_omega_p=float(cfg.hc_beta_omega_p),
+            hc_beta_tau=float(cfg.hc_beta_tau),
+            hc_strict_beta_tau=float(cfg.hc_strict_beta_tau),
+            hc_min_newton_iters=int(cfg.hc_min_newton_iters),
         )
 
         # Warmup: run once to trigger JIT compilation on the exact execution path.
@@ -79,7 +111,21 @@ class JuliaBackend:
         self._ready[key] = True
 
     def ensure_ready_linear(self, cfg: LinearUnivarConfig, warmup_endpoints: Optional[np.ndarray] = None) -> None:
-        key = (cfg.degree, cfg.extended_precision, cfg.compute_newton_iters)
+        key = (
+            cfg.degree,
+            cfg.extended_precision,
+            cfg.compute_newton_iters,
+            cfg.max_steps,
+            cfg.max_step_size,
+            cfg.max_initial_step_size,
+            cfg.min_step_size,
+            cfg.hc_a,
+            cfg.hc_beta_a,
+            cfg.hc_beta_omega_p,
+            cfg.hc_beta_tau,
+            cfg.hc_strict_beta_tau,
+            cfg.hc_min_newton_iters,
+        )
         if self._ready_linear.get(key, False):
             return
 
@@ -92,7 +138,12 @@ class JuliaBackend:
             max_step_size=float(cfg.max_step_size),
             max_initial_step_size=float(cfg.max_initial_step_size),
             min_step_size=float(cfg.min_step_size),
-            min_rel_step_size=float(cfg.min_rel_step_size),
+            hc_a=float(cfg.hc_a),
+            hc_beta_a=float(cfg.hc_beta_a),
+            hc_beta_omega_p=float(cfg.hc_beta_omega_p),
+            hc_beta_tau=float(cfg.hc_beta_tau),
+            hc_strict_beta_tau=float(cfg.hc_strict_beta_tau),
+            hc_min_newton_iters=int(cfg.hc_min_newton_iters),
         )
 
         if warmup_endpoints is None:

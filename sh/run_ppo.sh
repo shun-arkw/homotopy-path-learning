@@ -8,11 +8,14 @@
 #
 # CONFIGURATION SECTIONS:
 # 1. Env / problem parameters     - degree, bezier_degree, episode_len, etc.
-# 2. TargetCoeffConfig             - target polynomial coefficient sampling
-# 3. PPO parameters                - total_timesteps, num_steps, learning_rate, etc.
-# 4. Eval & logging                - eval_interval, eval_num_instances, wandb
-# 5. Result directory / timezone   - output layout and run timestamp timezone
-# 6. Run training                  - Execute train_cleanrl_ppo.py
+# 2. HC tracker (shared linear/bezier)
+#     2a. TrackerParameters        - HomotopyContinuation.TrackerParameters
+#     2b. TrackerOptions           - max_steps, step sizes, extended_precision
+# 3. TargetCoeffConfig             - target polynomial coefficient sampling
+# 4. PPO parameters                - total_timesteps, num_steps, learning_rate, etc.
+# 5. Eval & logging                - eval_interval, eval_num_instances, wandb
+# 6. Result directory / timezone   - output layout and run timestamp timezone
+# 7. Run training                  - Execute train_cleanrl_ppo.py
 # =============================================================================
 
 
@@ -37,7 +40,48 @@ z0_max_tries=20
 hc_gamma_trick=false
 
 # =============================================================================
-# 2. TARGET COEFF CONFIG (sampling of target polynomial coefficients)
+# 2. HC TRACKER (shared linear/bezier)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 2a. TRACKER PARAMETERS (HomotopyContinuation.TrackerParameters)
+# -----------------------------------------------------------------------------
+# Parameters for adaptive step size control and robustness of path tracking.
+# Theory and derivation: Timme (2020) "Mixed Precision Path Tracking for
+# Polynomial Homotopy Continuation", arXiv:1902.02968
+# https://arxiv.org/abs/1902.02968
+#
+# Julia names and reference values (default / fast / conservative):
+#   a              　(default=0.125, fast=0.125, conservative=0.125)
+#   β_a            　(default=1.0,   fast=1.0,   conservative=1.0)
+#   β_ω_p          　(default=3.0,   fast=2.0,   conservative=4.0)
+#   β_τ            　(default=0.4,   fast=0.75,  conservative=0.25)
+#   strict_β_τ     　(default=0.3,   fast=0.4,   conservative=0.1875)
+#   min_newton_iters (default=2,   　fast=2,     conservative=2)
+hc_a=0.125
+hc_beta_a=1.0
+hc_beta_omega_p=0.8
+hc_beta_tau=0.85
+hc_strict_beta_tau=0.8 # 0.8
+hc_min_newton_iters=1
+
+# -----------------------------------------------------------------------------
+# 2b. TRACKER OPTIONS (TrackerOptions)
+# -----------------------------------------------------------------------------
+# See: https://www.juliahomotopycontinuation.org/HomotopyContinuation.jl/stable/tracker/#HomotopyContinuation.Tracker
+# (TrackerOptions: max_steps, max_step_size, max_initial_step_size,
+#  min_step_size, extended_precision, etc.)
+#
+# max_steps, max_step_size, max_initial_step_size, min_step_size, extended_precision
+# Use "inf" for unlimited step size (passed as string; Python converts to float('inf')).
+hc_max_steps=50000
+hc_max_step_size="inf"
+hc_max_initial_step_size="inf"
+hc_min_step_size=1e-12
+hc_extended_precision=false
+
+# =============================================================================
+# 3. TARGET COEFF CONFIG (sampling of target polynomial coefficients)
 # =============================================================================
 target_dist_real="uniform"
 target_dist_imag="uniform"
@@ -51,9 +95,9 @@ target_low_imag=-5
 target_high_imag=5
 
 # =============================================================================
-# 3. PPO PARAMETERS
+# 4. PPO PARAMETERS
 # =============================================================================
-total_timesteps=10000000 # 1000000
+total_timesteps=10000 # 1000000
 num_steps=2048
 num_envs=1
 learning_rate=0.0003
@@ -63,7 +107,7 @@ gamma=0.99
 gae_lambda=0.95
 
 # =============================================================================
-# 4. EVAL & LOGGING
+# 5. EVAL & LOGGING
 # =============================================================================
 eval_interval=10
 eval_num_instances=1024
@@ -76,7 +120,7 @@ wandb_project_name="BezierHomotopyUnivar-PPO"
 wandb_entity=""
 
 # =============================================================================
-# 5. RESULT DIRECTORY / TIMEZONE
+# 6. RESULT DIRECTORY / TIMEZONE
 # =============================================================================
 # Timezone used by ppo_continuous_action.py to generate run names.
 # Examples: Europe/Paris, Asia/Tokyo, UTC
@@ -90,7 +134,7 @@ save_dir="${result_root}/${setting_tag}"
 mkdir -p "$save_dir"
 
 # =============================================================================
-# 6. RUN TRAINING
+# 7. RUN TRAINING
 # =============================================================================
 python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --degree "$degree" \
@@ -108,6 +152,17 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     $([ "$require_z0_success" = true ] && echo "--require-z0-success") \
     --z0-max-tries "$z0_max_tries" \
     $([ "$hc_gamma_trick" = true ] && echo "--hc-gamma-trick") \
+    --hc-a "$hc_a" \
+    --hc-beta-a "$hc_beta_a" \
+    --hc-beta-omega-p "$hc_beta_omega_p" \
+    --hc-beta-tau "$hc_beta_tau" \
+    --hc-strict-beta-tau "$hc_strict_beta_tau" \
+    --hc-min-newton-iters "$hc_min_newton_iters" \
+    --hc-max-steps "$hc_max_steps" \
+    --hc-max-step-size "$hc_max_step_size" \
+    --hc-max-initial-step-size "$hc_max_initial_step_size" \
+    --hc-min-step-size "$hc_min_step_size" \
+    $([ "$hc_extended_precision" = true ] && echo "--hc-extended-precision") \
     --seed "$seed" \
     --target-dist-real "$target_dist_real" \
     --target-dist-imag "$target_dist_imag" \

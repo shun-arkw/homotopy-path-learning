@@ -111,6 +111,20 @@ def _load_run_config(model_path: str) -> dict | None:
         return json.load(f)
 
 
+def _apply_hc_tracker_config(run_config: dict) -> None:
+    """Set BH_HC_* env vars from config.json hc_tracker_params and hc_tracker_options."""
+    def _set(k: str, v) -> None:
+        env_key = "BH_" + k.upper()
+        if isinstance(v, bool):
+            os.environ.setdefault(env_key, "1" if v else "0")
+        else:
+            os.environ.setdefault(env_key, str(v))
+
+    for section in ("hc_tracker_params", "hc_tracker_options"):
+        for key, value in (run_config.get(section) or {}).items():
+            _set(key, value)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate saved PPO model: Bezier vs linear (single gamma).")
     _env_args(parser)
@@ -130,6 +144,9 @@ def main():
             parser.set_defaults(**flat)
     args = parser.parse_args()
 
+    # Apply saved HC tracker config so eval uses same tracker as training
+    if run_config:
+        _apply_hc_tracker_config(run_config)
     # Newton iteration counting (env reads BH_COMPUTE_NEWTON_ITERS on register)
     os.environ["BH_COMPUTE_NEWTON_ITERS"] = "1" if (args.compute_newton_iters == "true") else "0"
     set_env_from_args(args)

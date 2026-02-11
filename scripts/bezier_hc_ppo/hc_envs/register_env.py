@@ -5,6 +5,14 @@ import gymnasium as gym
 from hc_envs.bezier_univar_env import TargetCoeffConfig
 
 
+def _parse_float_or_inf(value: str) -> float:
+    """Parse env var as float; 'inf' or 'infinity' -> float('inf')."""
+    v = (value or "").strip().lower()
+    if v in ("inf", "infinity"):
+        return float("inf")
+    return float(value)
+
+
 def _env_kwargs_from_envvars() -> dict:
     # Read config from environment variables so subprocess can pass them.
     f_coeff_config = TargetCoeffConfig(
@@ -40,6 +48,19 @@ def _env_kwargs_from_envvars() -> dict:
         compute_newton_iters=(os.environ.get("BH_COMPUTE_NEWTON_ITERS", "0") == "1"),
         include_progress_features=True,
         f_coeff_config=f_coeff_config,
+        # HC TrackerParameters (shared linear/bezier)
+        hc_a=float(os.environ.get("BH_HC_A", "0.125")),
+        hc_beta_a=float(os.environ.get("BH_HC_BETA_A", "1.0")),
+        hc_beta_omega_p=float(os.environ.get("BH_HC_BETA_OMEGA_P", "0.8")),
+        hc_beta_tau=float(os.environ.get("BH_HC_BETA_TAU", "0.85")),
+        hc_strict_beta_tau=float(os.environ.get("BH_HC_STRICT_BETA_TAU", "0.8")),
+        hc_min_newton_iters=int(os.environ.get("BH_HC_MIN_NEWTON_ITERS", "1")),
+        # HC TrackerOptions (shared linear/bezier)
+        hc_max_steps=int(os.environ.get("BH_HC_MAX_STEPS", "50000")),
+        hc_max_step_size=_parse_float_or_inf(os.environ.get("BH_HC_MAX_STEP_SIZE", "inf")),
+        hc_max_initial_step_size=_parse_float_or_inf(os.environ.get("BH_HC_MAX_INITIAL_STEP_SIZE", "inf")),
+        hc_min_step_size=float(os.environ.get("BH_HC_MIN_STEP_SIZE", "1e-12")),
+        hc_extended_precision=(os.environ.get("BH_HC_EXTENDED_PRECISION", "0") == "1"),
     )
 
 

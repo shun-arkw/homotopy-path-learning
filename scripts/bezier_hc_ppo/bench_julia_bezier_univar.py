@@ -15,7 +15,6 @@ class BezierUnivarConfig:
     max_step_size: float = 0.05
     max_initial_step_size: float = 0.05
     min_step_size: float = 1e-12
-    min_rel_step_size: float = 1e-12
     extended_precision: bool = False
 
 

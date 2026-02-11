@@ -107,7 +107,17 @@ def run_linear_baseline_eval(
         degree=base_env.degree,
         seed=base_env.seed0,
         compute_newton_iters=base_env.compute_newton_iters,
-        extended_precision=base_env.extended_precision,
+        extended_precision=base_env.hc_extended_precision,
+        max_steps=base_env.hc_max_steps,
+        max_step_size=base_env.hc_max_step_size,
+        max_initial_step_size=base_env.hc_max_initial_step_size,
+        min_step_size=base_env.hc_min_step_size,
+        hc_a=base_env.hc_a,
+        hc_beta_a=base_env.hc_beta_a,
+        hc_beta_omega_p=base_env.hc_beta_omega_p,
+        hc_beta_tau=base_env.hc_beta_tau,
+        hc_strict_beta_tau=base_env.hc_strict_beta_tau,
+        hc_min_newton_iters=base_env.hc_min_newton_iters,
     )
     backend.ensure_ready_linear(linear_cfg)
     for _ in range(int(num_instances)):

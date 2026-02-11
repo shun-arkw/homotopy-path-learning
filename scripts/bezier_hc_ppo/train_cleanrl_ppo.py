@@ -64,6 +64,19 @@ def main():
         dest="hc_gamma_trick",
         help="Enable homotopy gamma trick (BH_GAMMA_TRICK=1).",
     )
+    # HC TrackerParameters (shared linear/bezier): a, β_a, β_ω_p, β_τ, strict_β_τ, min_newton_iters
+    parser.add_argument("--hc-a", type=float, default=0.125, dest="hc_a")
+    parser.add_argument("--hc-beta-a", type=float, default=1.0, dest="hc_beta_a")
+    parser.add_argument("--hc-beta-omega-p", type=float, default=0.8, dest="hc_beta_omega_p")
+    parser.add_argument("--hc-beta-tau", type=float, default=0.85, dest="hc_beta_tau")
+    parser.add_argument("--hc-strict-beta-tau", type=float, default=0.8, dest="hc_strict_beta_tau")
+    parser.add_argument("--hc-min-newton-iters", type=int, default=1, dest="hc_min_newton_iters")
+    # HC TrackerOptions (shared linear/bezier): max_steps, step sizes, extended_precision
+    parser.add_argument("--hc-max-steps", type=int, default=50_000, dest="hc_max_steps")
+    parser.add_argument("--hc-max-step-size", type=str, default="inf", dest="hc_max_step_size", help="TrackerOptions max_step_size; use 'inf' for unlimited.")
+    parser.add_argument("--hc-max-initial-step-size", type=str, default="inf", dest="hc_max_initial_step_size", help="TrackerOptions max_initial_step_size; use 'inf' for unlimited.")
+    parser.add_argument("--hc-min-step-size", type=float, default=1e-12, dest="hc_min_step_size")
+    parser.add_argument("--hc-extended-precision", action="store_true", dest="hc_extended_precision")
     parser.add_argument("--seed", type=int, default=0)
 
     # TargetCoeffConfig: sampling of target polynomial coefficients
@@ -119,6 +132,19 @@ def main():
     os.environ["BH_GAMMA_TRICK"] = "1" if args.hc_gamma_trick else "0"
     os.environ["BH_SEED"] = str(args.seed)
     os.environ["BH_EXTENDED_PRECISION"] = "0"
+    # HC TrackerParameters (shared linear/bezier)
+    os.environ["BH_HC_A"] = str(args.hc_a)
+    os.environ["BH_HC_BETA_A"] = str(args.hc_beta_a)
+    os.environ["BH_HC_BETA_OMEGA_P"] = str(args.hc_beta_omega_p)
+    os.environ["BH_HC_BETA_TAU"] = str(args.hc_beta_tau)
+    os.environ["BH_HC_STRICT_BETA_TAU"] = str(args.hc_strict_beta_tau)
+    os.environ["BH_HC_MIN_NEWTON_ITERS"] = str(args.hc_min_newton_iters)
+    # HC TrackerOptions (shared linear/bezier)
+    os.environ["BH_HC_MAX_STEPS"] = str(args.hc_max_steps)
+    os.environ["BH_HC_MAX_STEP_SIZE"] = str(args.hc_max_step_size)
+    os.environ["BH_HC_MAX_INITIAL_STEP_SIZE"] = str(args.hc_max_initial_step_size)
+    os.environ["BH_HC_MIN_STEP_SIZE"] = str(args.hc_min_step_size)
+    os.environ["BH_HC_EXTENDED_PRECISION"] = "1" if args.hc_extended_precision else "0"
     # TargetCoeffConfig
     os.environ["BH_TARGET_DIST_REAL"] = args.target_dist_real
     os.environ["BH_TARGET_DIST_IMAG"] = args.target_dist_imag

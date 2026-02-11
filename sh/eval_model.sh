@@ -24,7 +24,7 @@ episode_len=1
 
 # Run subdir: run_YYYYMMDD_HHMMSS (same format as run_ppo.sh output)
 run_date="20260211"
-run_time="031356"
+run_time="040837"
 
 # Base dir for results (match run_ppo.sh result_root)
 result_root="results/bezier_ppo/univar"
@@ -32,7 +32,7 @@ setting_tag="degree${degree}_bezier${bezier_degree}_ep${episode_len}"
 run_subdir="run_${run_date}_${run_time}"
 input_path="${result_root}/${setting_tag}/${run_subdir}"
 
-num_instances=1024
+num_instances=10240
 eval_seed=0
 top_k=10
 worst_k=10
