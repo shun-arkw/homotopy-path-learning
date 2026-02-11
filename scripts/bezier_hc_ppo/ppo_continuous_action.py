@@ -178,8 +178,6 @@ def _mean_scalar(x):
 
 
 if __name__ == "__main__":
-    print("RUNNING:", __file__)
-
     args = tyro.cli(Args)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -199,6 +197,14 @@ if __name__ == "__main__":
             run_dt = datetime.now()
             run_tz_label = "local"
     run_name = f"run_{run_dt.strftime('%Y%m%d_%H%M%S')}"
+    run_dir = os.path.join(args.save_dir, run_name)
+    os.makedirs(run_dir, exist_ok=True)
+    log_path = os.path.join(run_dir, "train.log")
+    _file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter("%(message)s"))
+    logging.getLogger().addHandler(_file_handler)
+
+    logging.info("RUNNING: %s", __file__)
     logging.info(f"run_name={run_name} (timezone={run_tz_label})")
 
     if args.track:
@@ -214,7 +220,7 @@ if __name__ == "__main__":
             save_code=True,
         )
 
-    writer = SummaryWriter(os.path.join(args.save_dir, run_name))
+    writer = SummaryWriter(run_dir)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -244,6 +250,9 @@ if __name__ == "__main__":
     eval_instances = None
     linear_baseline_done = False
     eval_z0_done = False
+    last_eval_metrics = None
+    last_linear_metrics = None
+    initial_eval_metrics = None
     if args.eval_interval > 0 and args.eval_num_instances > 0:
         eval_env = make_env(args.env_id, 0, False, run_name, args.gamma)()
         eval_instances = build_fixed_eval_instances(eval_env, args.eval_num_instances, args.eval_seed)
@@ -444,6 +453,9 @@ if __name__ == "__main__":
                 eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
             eval_metrics = run_fixed_eval(eval_env, agent, device, args.eval_num_instances)
             if eval_metrics:
+                last_eval_metrics = eval_metrics
+                if initial_eval_metrics is None:
+                    initial_eval_metrics = eval_metrics
                 writer.add_scalar("eval/success_rate", eval_metrics["success_rate"], global_step)
                 writer.add_scalar("eval/tracking_cost_mean", eval_metrics["tracking_cost_mean"], global_step)
                 writer.add_scalar("eval/total_step_attempts_mean", eval_metrics["total_step_attempts_mean"], global_step)
@@ -503,6 +515,7 @@ if __name__ == "__main__":
                     eval_env.unwrapped.set_fixed_instances(eval_instances, reset_idx=True)
                 linear_metrics = run_linear_baseline_eval(eval_env, args.eval_num_instances)
                 if linear_metrics:
+                    last_linear_metrics = linear_metrics
                     writer.add_scalar("eval_linear/success_rate", linear_metrics["success_rate"], global_step)
                     writer.add_scalar("eval_linear/tracking_cost_mean", linear_metrics["tracking_cost_mean"], global_step)
                     writer.add_scalar(
@@ -521,12 +534,43 @@ if __name__ == "__main__":
                     )
                 linear_baseline_done = True
 
+    # Final evaluation summary (eval set: initial/final bezier, linear, improvement ratio)
+    if last_eval_metrics is not None:
+        logging.info("")
+        if initial_eval_metrics is not None:
+            logging.info(
+                "initial (eval set) bezier | "
+                f"tracking_cost_mean={initial_eval_metrics['tracking_cost_mean']:.3f} | "
+                f"total_step_attempts_mean={initial_eval_metrics['total_step_attempts_mean']:.1f}"
+            )
+        logging.info(
+            "final (eval set) bezier | "
+            f"tracking_cost_mean={last_eval_metrics['tracking_cost_mean']:.3f} | "
+            f"total_step_attempts_mean={last_eval_metrics['total_step_attempts_mean']:.1f}"
+        )
+        if last_linear_metrics is not None:
+            logging.info(
+                "final (eval set) linear | "
+                f"tracking_cost_mean={last_linear_metrics['tracking_cost_mean']:.3f} | "
+                f"total_step_attempts_mean={last_linear_metrics['total_step_attempts_mean']:.1f}"
+            )
+            l_tc = last_linear_metrics["tracking_cost_mean"]
+            l_steps = last_linear_metrics["total_step_attempts_mean"]
+            b_tc = last_eval_metrics["tracking_cost_mean"]
+            b_steps = last_eval_metrics["total_step_attempts_mean"]
+            ratio_tc = (l_tc - b_tc) / l_tc if l_tc > 0 else float("nan")
+            ratio_steps = (l_steps - b_steps) / l_steps if l_steps > 0 else float("nan")
+            logging.info(
+                "final (eval set) improvement ratio (linear - bezier) / linear | "
+                f"tracking_cost_mean={ratio_tc * 100:.2f}% | total_step_attempts_mean={ratio_steps * 100:.2f}%"
+            )
+
     if args.save_model:
-        run_dir = os.path.join(args.save_dir, run_name)
+        logging.info("")
         os.makedirs(run_dir, exist_ok=True)
         model_path = os.path.join(run_dir, f"{args.exp_name}.cleanrl_model")
         torch.save(agent.state_dict(), model_path)
-        print(f"model saved to {model_path}")
+        logging.info("model saved to %s", model_path)
         # Save full experiment config (env, hc_tracker, target_coeff, ppo, eval_logging)
         hc_gamma_trick = os.environ.get("BH_GAMMA_TRICK", "1") == "1"
         config = {
@@ -600,7 +644,7 @@ if __name__ == "__main__":
         config_path = os.path.join(run_dir, "config.json")
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
-        print(f"config saved to {config_path}")
+        logging.info("config saved to %s", config_path)
 
     envs.close()
     writer.close()

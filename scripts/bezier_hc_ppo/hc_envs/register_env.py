@@ -64,16 +64,34 @@ def _env_kwargs_from_envvars() -> dict:
     )
 
 
+BEZIER_ENV_ID = "BezierHomotopyUnivar-v0"
+
+
 def register_bezier_env() -> None:
-    env_id = "BezierHomotopyUnivar-v0"
-    if env_id in gym.registry:
+    if BEZIER_ENV_ID in gym.registry:
         return
 
     gym.register(
-        id=env_id,
+        id=BEZIER_ENV_ID,
         entry_point="hc_envs.bezier_univar_env:BezierHomotopyUnivarEnv",
         kwargs=_env_kwargs_from_envvars(),
     )
+
+
+def unregister_bezier_env() -> None:
+    """Remove Bezier env from gym registry so it can be re-registered with new kwargs (e.g. BH_COMPUTE_NEWTON_ITERS=0)."""
+    # Registry key may be short id or namespace/id depending on gymnasium version.
+    for key in (BEZIER_ENV_ID, f"hc_envs.register_env/{BEZIER_ENV_ID}"):
+        if key in gym.registry:
+            try:
+                del gym.registry[key]
+            except TypeError:
+                reg = gym.registry
+                if hasattr(reg, "env_specs"):
+                    reg.env_specs.pop(key, None)
+                elif hasattr(reg, "_env_specs"):
+                    reg._env_specs.pop(key, None)
+            break
 
 
 # Register on import so that `module:EnvID` works in a fresh subprocess.

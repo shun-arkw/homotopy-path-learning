@@ -22,23 +22,29 @@ degree=30
 bezier_degree=3
 episode_len=1
 
+# HC tracking params (must match the run you want to evaluate; same as run_ppo.sh)
+hc_beta_omega_p=0.8
+hc_beta_tau=0.85
+hc_strict_beta_tau=0.8
+
 # Run subdir: run_YYYYMMDD_HHMMSS (same format as run_ppo.sh output)
 run_date="20260211"
-run_time="040837"
+run_time="201606"
 
-# Base dir for results (match run_ppo.sh result_root)
+# Base dir for results (match run_ppo.sh result_root and hc_tracking_tag)
 result_root="results/bezier_ppo/univar"
 setting_tag="degree${degree}_bezier${bezier_degree}_ep${episode_len}"
+hc_tracking_tag="omega${hc_beta_omega_p}_tau${hc_beta_tau}_strict${hc_strict_beta_tau}"
 run_subdir="run_${run_date}_${run_time}"
-input_path="${result_root}/${setting_tag}/${run_subdir}"
+input_path="${result_root}/${setting_tag}/${hc_tracking_tag}/${run_subdir}"
 
-num_instances=10240
+num_instances=10 # 1024
 eval_seed=0
 top_k=10
 worst_k=10
 device="cpu"
 # Newton iteration counting: true=count (slower, reports total_newton_iterations_*), false=do not (faster)
-compute_newton_iters=false
+compute_newton_iters=false # false
 # Leave empty to save to <run_dir>/eval_results.json
 save_results=""
 

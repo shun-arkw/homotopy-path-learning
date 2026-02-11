@@ -97,7 +97,7 @@ target_high_imag=5
 # =============================================================================
 # 4. PPO PARAMETERS
 # =============================================================================
-total_timesteps=10000 # 1000000
+total_timesteps=50000 # 1000000
 num_steps=2048
 num_envs=1
 learning_rate=0.0003
@@ -127,10 +127,11 @@ wandb_entity=""
 run_tz="${RUN_TZ:-Europe/Paris}"
 export RUN_TZ="$run_tz"
 
-# Save runs under: result/degree{d}_bezier{b}_ep{t}/run_YYYYMMDD_HHMMSS
+# Save runs under: result/degree{d}_bezier{b}_ep{t}/omega{o}_tau{t}_strict{s}/run_YYYYMMDD_HHMMSS
 result_root="results/bezier_ppo/univar"
 setting_tag="degree${degree}_bezier${bezier_degree}_ep${episode_len}"
-save_dir="${result_root}/${setting_tag}"
+hc_tracking_tag="omega${hc_beta_omega_p}_tau${hc_beta_tau}_strict${hc_strict_beta_tau}"
+save_dir="${result_root}/${setting_tag}/${hc_tracking_tag}"
 mkdir -p "$save_dir"
 
 # =============================================================================
