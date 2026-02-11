@@ -12,3 +12,7 @@ for f in fields
     vcon  = getfield(p_con, f)
     println(rpad(string(f), 28), "  default=", vdef, "  fast=", vfast, "  cons=", vcon)
 end
+
+
+@show p_fast
+println(fieldnames(typeof(p_fast)))

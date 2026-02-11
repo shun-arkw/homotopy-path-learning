@@ -18,13 +18,13 @@ set -euo pipefail
 # 1. CONFIGURATION (edit these)
 # =============================================================================
 # Experiment setting (must match the run you want to evaluate; same as run_ppo.sh)
-degree=10
+degree=30
 bezier_degree=3
 episode_len=1
 
 # Run subdir: run_YYYYMMDD_HHMMSS (same format as run_ppo.sh output)
-run_date="20260210"
-run_time="182424"
+run_date="20260211"
+run_time="031356"
 
 # Base dir for results (match run_ppo.sh result_root)
 result_root="results/bezier_ppo/univar"
@@ -33,7 +33,7 @@ run_subdir="run_${run_date}_${run_time}"
 input_path="${result_root}/${setting_tag}/${run_subdir}"
 
 num_instances=1024
-eval_seed=1234
+eval_seed=0
 top_k=10
 worst_k=10
 device="cpu"

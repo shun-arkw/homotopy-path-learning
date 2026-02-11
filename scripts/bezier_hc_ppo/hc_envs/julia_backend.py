@@ -6,7 +6,7 @@ from typing import Dict, Tuple, Optional
 import numpy as np
 from juliacall import Main as jl
 
-
+MAX_STEP_SIZE = float('inf')
 @dataclass(frozen=True)
 class BezierUnivarConfig:
     degree: int
@@ -14,8 +14,8 @@ class BezierUnivarConfig:
     seed: int
     compute_newton_iters: bool = False
     max_steps: int = 50_000
-    max_step_size: float = 0.05 # 0.05
-    max_initial_step_size: float = 0.05 # 0.05
+    max_step_size: float = MAX_STEP_SIZE # 0.05
+    max_initial_step_size: float = MAX_STEP_SIZE # 0.05
     min_step_size: float = 1e-12
     min_rel_step_size: float = 1e-12
     extended_precision: bool = False
@@ -27,8 +27,8 @@ class LinearUnivarConfig:
     seed: int
     compute_newton_iters: bool = False
     max_steps: int = 50_000
-    max_step_size: float = 0.05 # 0.05
-    max_initial_step_size: float = 0.05 # 0.05
+    max_step_size: float = MAX_STEP_SIZE # 0.05
+    max_initial_step_size: float = MAX_STEP_SIZE # 0.05
     min_step_size: float = 1e-12
     min_rel_step_size: float = 1e-12
     extended_precision: bool = False

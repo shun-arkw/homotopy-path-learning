@@ -174,6 +174,15 @@ function init_linear_univar(;
     update_linear_diff!(H)
     starts = total_degree_start_solutions_univar(degree)
 
+    p_custom = HomotopyContinuation.TrackerParameters(
+        0.125,  # a              (default=0.125, fast=0.125, conservative=0.125)
+        1.0,    # β_a            (default=1.0,   fast=1.0,   conservative=1.0)
+        0.8,    # β_ω_p          (default=3.0,   fast=2.0,   conservative=4.0)
+        0.85,   # β_τ            (default=0.4,   fast=0.75,  conservative=0.25)
+        0.8,   # strict_β_τ     (default=0.3,   fast=0.4,   conservative=0.1875)
+        1,      # min_newton_iters (default=2,   fast=2,     conservative=2)
+    )
+
     opts = HomotopyContinuation.TrackerOptions(
         max_steps = max_steps,
         max_step_size = max_step_size,
@@ -181,7 +190,7 @@ function init_linear_univar(;
         min_step_size = min_step_size,
         min_rel_step_size = min_rel_step_size,
         extended_precision = extended_precision,
-        parameters = :fast,
+        parameters = p_custom,
     )
 
     tracker = HomotopyContinuation.Tracker(H; options=opts)
