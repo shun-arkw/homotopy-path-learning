@@ -13,7 +13,6 @@ using Base.Threads
 # ============================================================
 
 @inline function poly_and_deriv_horner(coeffs::AbstractVector, x)
-    # returns (P(x), P'(x)) with one pass
     b = convert(typeof(x), coeffs[1])
     c = zero(x)
     @inbounds for i in 2:length(coeffs)
@@ -36,12 +35,10 @@ end
 # ============================================================
 
 struct LinearUnivarPoly <: AbstractHomotopy
-    degree::Int                # polynomial degree
-    # endpoints: row 1 = start coeffs, row 2 = target coeffs
-    endpoints::Matrix{ComplexF64}  # size (2, degree+1)
-    # effective coeff buffers (descending order)
-    ceff0::Vector{ComplexF64}
-    ceff1::Vector{ComplexF64}  # d/dtau coefficients (constant)
+    degree::Int
+    endpoints::Matrix{ComplexF64}      # (2, degree+1)
+    ceff0::Vector{ComplexF64}          # coeffs at tau
+    ceff1::Vector{ComplexF64}          # d/dtau coeffs (constant)
 end
 
 Base.size(::LinearUnivarPoly) = (1, 1)
@@ -89,6 +86,8 @@ function ModelKit.taylor!(u, ::Val{k}, H::LinearUnivarPoly, x::Vector{ComplexF64
         return u
     elseif k == 1
         # d/dt = -d/dtau
+        # ここは ceff1 を反転せずにその場でマイナスを掛けて評価しても良いが，
+        # 既存実装との互換性を保つため最小修正にする
         @inbounds for i in 1:length(H.ceff1)
             H.ceff1[i] = -H.ceff1[i]
         end
@@ -137,7 +136,7 @@ function total_degree_start_solutions_univar(degree::Int)
 end
 
 # ============================================================
-# 4) State with per-thread cache (for parallel path tracking)
+# 4) State with per-thread cache
 # ============================================================
 
 mutable struct LinearUnivarState
@@ -181,7 +180,7 @@ end
 function init_linear_univar(;
     degree::Int,
     seed::Int = 0,
-    compute_newton_iters::Bool = false,
+    compute_newton_iters::Bool = false,   # 互換のため残す（init では未使用）
     extended_precision::Bool = false,
     max_steps::Int = 50_000,
     max_step_size::Float64 = 0.05,
@@ -198,6 +197,7 @@ function init_linear_univar(;
     Random.seed!(seed)
     ncoef = degree + 1
     endpoints = zeros(ComplexF64, 2, ncoef)
+
     # Dummy warmup endpoints: start = x^degree - 1, target = small random
     endpoints[1, 1] = 1.0 + 0im
     for i in 2:ncoef-1
@@ -253,14 +253,19 @@ function init_linear_univar(;
     return nothing
 end
 
-function track_linear_paths_univar(degree::Int, start_coeffs::AbstractVector{<:Complex}, target_coeffs::AbstractVector{<:Complex}; compute_newton_iters::Bool=false)
+function track_linear_paths_univar(
+    degree::Int,
+    start_coeffs::AbstractVector{<:Complex},
+    target_coeffs::AbstractVector{<:Complex};
+    compute_newton_iters::Bool=false,
+)
     t0 = time()
     st = __STATE_LINEAR__[degree]
     @assert length(start_coeffs) == degree + 1
     @assert length(target_coeffs) == degree + 1
 
     if compute_newton_iters
-        # Sequential: safe with stdout/stderr capture for Newton iteration logging
+        # stdout/stderr を触るので逐次で安全運用
         H = st.H0
         @inbounds for i in 1:(degree+1)
             H.endpoints[1, i] = start_coeffs[i]
@@ -319,11 +324,11 @@ function track_linear_paths_univar(degree::Int, start_coeffs::AbstractVector{<:C
         )
     end
 
-    # Parallel path tracking with cached per-thread trackers
+    # --- parallel path tracking with cached per-thread trackers ---
     _ensure_thread_cache!(st)
     nt = st.nthreads_cached
 
-    # Copy endpoints into each thread's homotopy (sequential; cheap)
+    # 各スレッドの H に endpoints を反映（逐次で OK）
     @inbounds for tid in 1:nt
         Hloc = st.Hs[tid]
         @inbounds for i in 1:(degree+1)
@@ -357,8 +362,8 @@ function track_linear_paths_univar(degree::Int, start_coeffs::AbstractVector{<:C
     total_rejected_steps = sum(rej)
     total_step_attempts  = total_accepted_steps + total_rejected_steps
     success_flag         = all(ok)
-    tracking_time_sec    = sum(tsec)
-    runtime_sec          = time() - t0
+    tracking_time_sec    = sum(tsec)              # 合計作業量（sum）
+    runtime_sec          = time() - t0            # 壁時計（この関数の実時間）
 
     return (
         success_flag=success_flag,

@@ -98,21 +98,14 @@ end
 # ============================================================
 
 struct BezierUnivarPoly <: AbstractHomotopy
-    degree::Int                # polynomial degree
-    bezier_degree::Int         # Bezier degree (control points bezier_degree+1)
-    max_derivative_order::Int                  # derivatives w.r.t t supported (<=4, <=bezier_degree)
+    degree::Int
+    bezier_degree::Int
+    max_derivative_order::Int
 
-    # control coefficients: ctrl[j, :] = j-th control point's coeff vector [a_n..a_0]
-    # ctrl has size (bezier_degree+1, degree+1)
     ctrl::Matrix{ComplexF64}
-
-    # forward differences: diffs[k] has size (bezier_degree+1-k, degree+1)
     diffs::Vector{Matrix{ComplexF64}}
-
-    # weight buffers for degrees bezier_degree, bezier_degree-1, ..., bezier_degree-max_derivative_order
     wbufs::Vector{Vector{Float64}}
 
-    # effective coeff buffers (descending order)
     ceff0::Vector{ComplexF64}
     ceff1::Vector{ComplexF64}
     ceff2::Vector{ComplexF64}
@@ -125,12 +118,12 @@ ModelKit.variables(::BezierUnivarPoly) = [Variable(:x)]
 ModelKit.parameters(::BezierUnivarPoly) = Variable[]
 
 function eval_coeffs0!(H::BezierUnivarPoly, τ::Float64)
-    w = H.wbufs[1]                    # length bezier_degree+1
+    w = H.wbufs[1]
     bernstein_weights_casteljau!(w, τ)
     ncoef = H.degree + 1
     @inbounds for i in 1:ncoef
         s = 0.0 + 0im
-        for j in 1:(H.bezier_degree+1)
+        for j in 1:(H.bezier_degree + 1)
             s += w[j] * H.ctrl[j, i]
         end
         H.ceff0[i] = s
@@ -149,15 +142,15 @@ function eval_coeffs_k!(out::Vector{ComplexF64}, H::BezierUnivarPoly, τ::Float6
         return out
     end
     deg = H.bezier_degree - k
-    w = H.wbufs[k+1]                  # length deg+1
+    w = H.wbufs[k+1]
     bernstein_weights_casteljau!(w, τ)
-    Dk = H.diffs[k]                   # (deg+1, degree+1)
+    Dk = H.diffs[k]
     fac = fallfac(H.bezier_degree, k)
 
     ncoef = H.degree + 1
     @inbounds for i in 1:ncoef
         s = 0.0 + 0im
-        for j in 1:(deg+1)
+        for j in 1:(deg + 1)
             s += w[j] * Dk[j, i]
         end
         out[i] = fac * s
@@ -228,7 +221,7 @@ function ModelKit.taylor!(u, ::Val{k}, H::BezierUnivarPoly, tx, t) where {k}
 end
 
 # ============================================================
-# 5) Starts for G(x)=x^n-1 (total-degree style, univariate)
+# 5) Starts for G(x)=x^n-1
 # ============================================================
 
 function total_degree_start_solutions_univar(degree::Int)
@@ -241,34 +234,32 @@ end
 
 # ============================================================
 # 6) Default control points builder (for benchmark)
-# G fixed: x^n - 1
-# F random: leading coefficient not necessarily 1
 # ============================================================
 
 function build_ctrl_univar(degree::Int, bezier_degree::Int; seed::Int=0, sigma_mid::Float64=0.2, sigma_F::Float64=0.3)
     Random.seed!(seed)
     ncoef = degree + 1
-    ctrl = zeros(ComplexF64, bezier_degree+1, ncoef)
+    ctrl = zeros(ComplexF64, bezier_degree + 1, ncoef)
 
-    # --- G endpoint: row 1 = control point 1 (x^degree - 1) ---
-    ctrl[1, 1] = 1.0 + 0im        # a_n
+    # G endpoint: x^degree - 1
+    ctrl[1, 1] = 1.0 + 0im
     for i in 2:ncoef-1
         ctrl[1, i] = 0.0 + 0im
     end
-    ctrl[1, ncoef] = -1.0 + 0im   # a_0
+    ctrl[1, ncoef] = -1.0 + 0im
 
-    # --- F endpoint: row bezier_degree+1 = control point bezier_degree+1 (random coeffs) ---
+    # F endpoint: random coeffs
     for i in 1:ncoef
-        ctrl[bezier_degree+1, i] = sigma_F * (randn() + randn()*im)
+        ctrl[bezier_degree+1, i] = sigma_F * (randn() + randn() * im)
     end
     if abs(ctrl[bezier_degree+1, 1]) < 1e-3
         ctrl[bezier_degree+1, 1] += 1.0 + 0im
     end
 
-    # --- intermediate control points: rows 2..bezier_degree ---
+    # intermediates
     for j in 2:bezier_degree
         for i in 1:ncoef
-            ctrl[j, i] = sigma_mid * (randn() + randn()*im)
+            ctrl[j, i] = sigma_mid * (randn() + randn() * im)
         end
         ctrl[j, 1] += 1.0 + 0im
     end
@@ -286,7 +277,7 @@ function make_homotopy_univar(degree::Int, bezier_degree::Int; seed::Int=0)
 
     diffs = Vector{Matrix{ComplexF64}}(undef, max_derivative_order)
     for k in 1:max_derivative_order
-        diffs[k] = zeros(ComplexF64, (bezier_degree+1-k), ncoef)
+        diffs[k] = zeros(ComplexF64, (bezier_degree + 1 - k), ncoef)
     end
     compute_diffs!(diffs, ctrl, bezier_degree, max_derivative_order)
 
@@ -309,7 +300,7 @@ function make_homotopy_univar(degree::Int, bezier_degree::Int; seed::Int=0)
 end
 
 # ============================================================
-# 7) State with per-thread cache (for parallel path tracking)
+# 7) State with per-thread cache
 # ============================================================
 
 mutable struct BezierUnivarState
@@ -355,13 +346,13 @@ function init_bezier_univar(;
     degree::Int,
     bezier_degree::Int,
     seed::Int = 0,
-    compute_newton_iters::Bool = false,
+    compute_newton_iters::Bool = false,  # 互換のため残す（init では未使用）
     extended_precision::Bool = false,
     max_steps::Int = 50_000,
     max_step_size::Float64 = 0.05,
     max_initial_step_size::Float64 = 0.05,
     min_step_size::Float64 = 1e-12,
-    # HC TrackerParameters (shared with linear_univar.jl)
+    # HC TrackerParameters
     hc_a::Float64 = 0.125,
     hc_beta_a::Float64 = 1.0,
     hc_beta_omega_p::Float64 = 0.8,
@@ -412,9 +403,10 @@ function init_bezier_univar(;
     return nothing
 end
 
-# Set control points, then run path tracking for all start solutions.
-# control_points: (bezier_degree+1, degree+1) complex, row j = j-th control point's coeff vector [a_n..a_0]
-# When compute_newton_iters=true: sequential (stdout/stderr capture); else: parallel with per-thread trackers.
+# ------------------------------------------------------------
+# path tracking
+# ------------------------------------------------------------
+
 function track_bezier_paths_univar(degree::Int, bezier_degree::Int, control_points::AbstractArray{<:Complex,2}; compute_newton_iters::Bool=false)
     t0 = time()
     st = __STATE__[(degree, bezier_degree)]
@@ -422,7 +414,7 @@ function track_bezier_paths_univar(degree::Int, bezier_degree::Int, control_poin
     n = length(starts)
 
     if compute_newton_iters
-        # Sequential: safe with stdout/stderr capture for Newton iteration logging
+        # 安全のため逐次（stdout/stderr をいじるので並列と相性が悪い）
         H = st.H0
         @assert size(control_points) == size(H.ctrl)
         copyto!(H.ctrl, control_points)
@@ -479,11 +471,11 @@ function track_bezier_paths_univar(degree::Int, bezier_degree::Int, control_poin
         )
     end
 
-    # Parallel path tracking with cached per-thread trackers
+    # --- parallel path tracking with cached per-thread trackers ---
     _ensure_thread_cache!(st)
     nt = st.nthreads_cached
 
-    # Copy control_points into each thread's homotopy (sequential; cheap)
+    # 各スレッドの H に control_points を反映（ここは逐次で OK，軽い）
     @inbounds for tid in 1:nt
         Hloc = st.Hs[tid]
         @assert size(control_points) == size(Hloc.ctrl)

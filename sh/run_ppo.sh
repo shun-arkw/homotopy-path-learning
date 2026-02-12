@@ -97,7 +97,7 @@ target_high_imag=5
 # =============================================================================
 # 4. PPO PARAMETERS
 # =============================================================================
-total_timesteps=50000 # 1000000
+total_timesteps=1000000 # 1000000
 num_steps=2048
 num_envs=1
 learning_rate=0.0003
@@ -120,12 +120,19 @@ wandb_project_name="BezierHomotopyUnivar-PPO"
 wandb_entity=""
 
 # =============================================================================
-# 6. RESULT DIRECTORY / TIMEZONE
+# 6. RESULT DIRECTORY / TIMEZONE / JULIA THREADS
 # =============================================================================
 # Timezone used by ppo_continuous_action.py to generate run names.
 # Examples: Europe/Paris, Asia/Tokyo, UTC
 run_tz="${RUN_TZ:-Europe/Paris}"
 export RUN_TZ="$run_tz"
+
+# Julia threads for parallel path tracking (bezier_univar.jl, linear_univar.jl).
+# Set before any Python process that loads juliacall. 
+export JULIA_NUM_THREADS="${JULIA_NUM_THREADS:-8}"
+
+# Recommended when using Julia with multiple threads via juliacall (avoids segfaults; Ctrl-C may not raise KeyboardInterrupt).
+export PYTHON_JULIACALL_HANDLE_SIGNALS=yes
 
 # Save runs under: result/degree{d}_bezier{b}_ep{t}/omega{o}_tau{t}_strict{s}/run_YYYYMMDD_HHMMSS
 result_root="results/bezier_ppo/univar"

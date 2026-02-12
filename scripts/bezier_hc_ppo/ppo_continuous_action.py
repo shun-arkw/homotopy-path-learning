@@ -565,6 +565,18 @@ if __name__ == "__main__":
                 f"tracking_cost_mean={ratio_tc * 100:.2f}% | total_step_attempts_mean={ratio_steps * 100:.2f}%"
             )
 
+    # Training wall-clock time (from start of rollout loop to end of training)
+    elapsed_sec = time.time() - start_time
+    hours, remainder = divmod(int(elapsed_sec), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        elapsed_str = f"{hours}h {minutes}m {seconds}s"
+    elif minutes > 0:
+        elapsed_str = f"{minutes}m {seconds}s"
+    else:
+        elapsed_str = f"{elapsed_sec:.1f}s"
+    logging.info("training_time=%s (%.1f sec)", elapsed_str, elapsed_sec)
+
     if args.save_model:
         logging.info("")
         os.makedirs(run_dir, exist_ok=True)
@@ -574,6 +586,9 @@ if __name__ == "__main__":
         # Save full experiment config (env, hc_tracker, target_coeff, ppo, eval_logging)
         hc_gamma_trick = os.environ.get("BH_GAMMA_TRICK", "1") == "1"
         config = {
+            "run": {
+                "training_time_sec": round(elapsed_sec, 1),
+            },
             "env": {
                 "degree": int(os.environ.get("BH_DEGREE", "10")),
                 "bezier_degree": int(os.environ.get("BH_BEZIER_DEGREE", "2")),
