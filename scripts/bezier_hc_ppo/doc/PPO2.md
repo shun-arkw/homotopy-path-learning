@@ -8,7 +8,7 @@
 - 評価：Julia HCソルバーで追跡し，成功率と計算コスト（`total_step_attempts`，`total_accepted_steps`，`total_rejected_steps`，`success_flag`）を改善する．ただし，`total_step_attempts` = `total_accepted_steps` + `total_rejected_steps` である．
 
 ### 1.2 スコープ（今回やること／やらないこと）
-- やる：一変数，サポート固定（次数$0..n$），Bézier degree $d\in\{2,3\}$，連続action（潜在変数方式）  
+- やる：一変数，サポート固定（次数$0..n$），Bézier degree $d\geq 2$（2, 3, 4, ...），連続action（潜在変数方式）  
 - やらない：可変サポート（離散action），多変数拡張（将来拡張点として設計に含めるのみ）  
 
 ---
@@ -76,8 +76,7 @@ obsは連結ベクトル（`float32`）とする．
 
 ### 5.3 行動（action）
 - one-step（最初の実装で推奨）
-  - $d=2$：`action shape = (m,)`  
-  - $d=3$：`action shape = (2m,)`（$z_1,z_2$ を連結）  
+  - 一般に `action shape = ((d-1)m,)`（$z_1,\dots,z_{d-1}$ を連結）．例：$d=2$ のとき $(m,)$，$d=3$ のとき $(2m,)$，$d=4$ のとき $(3m,)$．
 - multi-step（将来拡張）
   - `action = delta z`，内部状態として$z$を環境が保持する．  
 
