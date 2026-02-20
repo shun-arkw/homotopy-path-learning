@@ -17,7 +17,7 @@
 # Edit the next lines when using a different GPU server.
 # -----------------------------------------------------------------------------
 NUM_GPUS=1
-JULIA_THREADS=8
+JULIA_THREADS=20
 RUN_TZ_DEFAULT="Europe/Paris" # Europe/Paris, Asia/Tokyo, UTC
 
 # Override NUM_GPUS by first argument if given (e.g. bash sh/run_all_ppo.sh 4)
@@ -70,7 +70,7 @@ target_high_real=5
 target_low_imag=-5
 target_high_imag=5
 
-total_timesteps=1000000 # 1000000
+total_timesteps=5000000 # 1000000
 num_steps=2048
 num_envs=1
 learning_rate=0.0003
@@ -94,22 +94,19 @@ result_root="results/bezier_ppo/univar"
 # -----------------------------------------------------------------------------
 # Grid to sweep (degree x bezier_degree x hc_beta_omega_p)
 # -----------------------------------------------------------------------------
-degrees=(5 10) # (5 10 20 30 40 50)
-bezier_degrees=(2) # (2 3)
+degrees=(160) # (5 10 20 30 40 50)
+bezier_degrees=(2 3 4 5) # (2 3)
 omega_ps=(0.8) # (0.8 1.0)
 
-# Per-job log directory (stdout/stderr from each parallel run; train.log remains inside each run's save_dir)
+# Per-job stdout/stderr: not saved (train.log remains inside each run's save_dir)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="${SCRIPT_DIR}/logs_run_all"
-mkdir -p "$LOG_DIR"
 
-# Run a single PPO experiment (degree, bezier_degree, hc_beta_omega_p, gpu_id, log_path)
+# Run a single PPO experiment (degree, bezier_degree, hc_beta_omega_p, gpu_id)
 run_one_ppo() {
     local degree="$1"
     local bezier_degree="$2"
     local hc_beta_omega_p="$3"
     local gpu_id="$4"
-    local log_path="$5"
     local latent_dim="$degree"
     local setting_tag="degree${degree}_bezier${bezier_degree}_ep${episode_len}"
     local hc_tracking_tag="omega${hc_beta_omega_p}_tau${hc_beta_tau}_strict${hc_strict_beta_tau}"
@@ -171,7 +168,7 @@ run_one_ppo() {
         $([ "$track" = true ] && echo "--track") \
         $([ -n "$wandb_project_name" ] && echo "--wandb-project-name" "$wandb_project_name") \
         $([ -n "$wandb_entity" ] && echo "--wandb-entity" "$wandb_entity") \
-        >> "$log_path" 2>&1
+        >> /dev/null 2>&1
 }
 
 # Build list of (degree, bezier_degree, omega_p) triples
@@ -185,7 +182,7 @@ for d in "${degrees[@]}"; do
 done
 
 total="${#triples[@]}"
-echo "run_all_ppo: ${total} experiments, max ${NUM_GPUS} concurrent GPU(s). Logs: ${LOG_DIR}"
+echo "run_all_ppo: ${total} experiments, max ${NUM_GPUS} concurrent GPU(s)."
 started=0
 
 for triple in "${triples[@]}"; do
@@ -194,12 +191,9 @@ for triple in "${triples[@]}"; do
     done
     read -r d b o <<< "$triple"
     gpu_id=$((started % NUM_GPUS))
-    # Log filename: d5_b2_o0.6_gpu0.log (safe, no spaces)
-    log_name="d${d}_b${b}_o${o}_gpu${gpu_id}.log"
-    log_path="${LOG_DIR}/${log_name}"
     started=$((started + 1))
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ${started}/${total}: degree=${d} bezier_degree=${b} hc_beta_omega_p=${o} GPU=${gpu_id} -> ${log_name}"
-    run_one_ppo "$d" "$b" "$o" "$gpu_id" "$log_path" &
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ${started}/${total}: degree=${d} bezier_degree=${b} hc_beta_omega_p=${o} GPU=${gpu_id}"
+    run_one_ppo "$d" "$b" "$o" "$gpu_id" &
 done
 
 wait

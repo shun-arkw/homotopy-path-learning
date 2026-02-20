@@ -18,8 +18,8 @@ set -euo pipefail
 # 1. CONFIGURATION (edit these)
 # =============================================================================
 # Experiment setting (must match the run you want to evaluate; same as run_ppo.sh)
-degree=30
-bezier_degree=3
+degree=80
+bezier_degree=5
 episode_len=1
 
 # HC tracking params (must match the run you want to evaluate; same as run_ppo.sh)
@@ -28,8 +28,8 @@ hc_beta_tau=0.85
 hc_strict_beta_tau=0.8
 
 # Run subdir: run_YYYYMMDD_HHMMSS (same format as run_ppo.sh output)
-run_date="20260211"
-run_time="201606"
+run_date="20260213"
+run_time="225351"
 
 # Base dir for results (match run_ppo.sh result_root and hc_tracking_tag)
 result_root="results/bezier_ppo/univar"
@@ -38,13 +38,13 @@ hc_tracking_tag="omega${hc_beta_omega_p}_tau${hc_beta_tau}_strict${hc_strict_bet
 run_subdir="run_${run_date}_${run_time}"
 input_path="${result_root}/${setting_tag}/${hc_tracking_tag}/${run_subdir}"
 
-num_instances=10 # 1024
+num_instances=1000 # 1024
 eval_seed=0
 top_k=10
 worst_k=10
 device="cpu"
 # Newton iteration counting: true=count (slower, reports total_newton_iterations_*), false=do not (faster)
-compute_newton_iters=false # false
+compute_newton_iters=true # false
 # Leave empty to save to <run_dir>/eval_results.json
 save_results=""
 
