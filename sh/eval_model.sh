@@ -18,8 +18,8 @@ set -euo pipefail
 # 1. CONFIGURATION (edit these)
 # =============================================================================
 # Experiment setting (must match the run you want to evaluate; same as run_ppo.sh)
-degree=80
-bezier_degree=5
+degree=20
+bezier_degree=4
 episode_len=1
 
 # HC tracking params (must match the run you want to evaluate; same as run_ppo.sh)
@@ -28,8 +28,8 @@ hc_beta_tau=0.85
 hc_strict_beta_tau=0.8
 
 # Run subdir: run_YYYYMMDD_HHMMSS (same format as run_ppo.sh output)
-run_date="20260213"
-run_time="225351"
+run_date="20260212"
+run_time="205924"
 
 # Base dir for results (match run_ppo.sh result_root and hc_tracking_tag)
 result_root="results/bezier_ppo/univar"
