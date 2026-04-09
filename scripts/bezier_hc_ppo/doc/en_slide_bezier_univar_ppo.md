@@ -62,7 +62,7 @@ $$
 
 ## 6. Experimental Setup
 
-- Degree $n \in \{5, 10, 20, 40, 80\}$, Bézier degree $d \in \{3, 4\}$, $T=1$.
+- Degree $n \in \{5, 10, 20, 40, 80\}$, Bézier degree $d \in \{2, 3, 4\}$, $T=1$.
 - Reward: $c_{\text{linear}}=10$, $\rho=1$, failure penalty $M$.
 - Tracker step params ($\alpha$, $\beta_{\omega_p}$, $\beta_\tau$, strict $\beta_\tau$, …) from prior work.
 - PPO: total steps, rollout length, LR, $\gamma$, GAE $\lambda$ in standard ranges.
@@ -75,7 +75,7 @@ $$
 An example of training and evaluation is shown in the figure below.
 
 <p align="center">
-    <img src="img/result_bezier_univar_ppo.png" alt="Bézier univariate PPO learning results" width="700">
+    <img src="img/result_bezier_univar_ppo2.png" alt="Bézier univariate PPO learning results" width="700">
 </p>
 
 
@@ -83,7 +83,8 @@ An example of training and evaluation is shown in the figure below.
 - **Success rate:** 1.0 for all conditions → comparison is **efficiency (\#steps)**.
 - **Overall:** Bézier reduces \#steps for many degrees; **$d_b=4$** consistently best.
 - **Mean/median:** $d_b=4$ minimal at degree 10, 20, 40, 80 → **~15–19%** reduction vs linear.
-- **Stability (std):** $d_b=4$ minimizes std for many degrees.
+- **Stability (std):** $d_b=4$ minimizes std for all degrees.
 - **Worst case (max):** $d_b=4$ best at degree 10, 20, 80; linear best at degree 5, 40 (curve can slightly worsen worst instances).
 - **$d_b=3$:** mean/median improve but max worsens at some degrees (“good on average, prone to outliers”).
+- **Condition length (mean) vs \#steps (mean):** Both improve with Bézier; **$d_b=4$** is best for *both* at degree 10, 20, 40, 80. At degree 5, $d_b=4$ has the shortest condition length (-14.3%) but $d_b=3$ has the fewest steps (-20.8%). Condition-length reduction is often **larger** than step reduction (e.g. degree 20: -23.0% vs -19.1%) → shorter path tends to yield fewer steps, with some gap.
 - **Conclusion:** recommend **$d_b=4$** by default (stable improvement at high degree).
