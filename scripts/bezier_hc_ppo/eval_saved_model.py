@@ -15,6 +15,8 @@ import json
 import os
 import sys
 
+import numpy as np
+
 
 def _env_args(parser):
     """Add env/config args with defaults matching run_ppo.sh."""
@@ -66,6 +68,21 @@ def _env_args(parser):
         choices=["true", "false"],
         dest="compute_newton_iters",
         help="Count Newton iterations: true (slower, reports total_newton_iterations_*), false (faster).",
+    )
+    parser.add_argument(
+        "--compute-condition-length",
+        type=str,
+        default="true",
+        choices=["true", "false"],
+        dest="compute_condition_length",
+        help="Compute condition length stats for Bezier and linear paths: true (default), false (faster).",
+    )
+    parser.add_argument(
+        "--condition-length-samples",
+        type=int,
+        default=16,
+        dest="condition_length_samples",
+        help="Samples per path for condition length integration (default: 16).",
     )
 
 
@@ -178,18 +195,84 @@ def main():
     instances = build_fixed_eval_instances(eval_env, args.num_instances, args.eval_seed)
     eval_env.unwrapped.set_fixed_instances(instances, reset_idx=True)
 
+    compute_cl = args.compute_condition_length == "true"
     bezier = run_fixed_eval(
-        eval_env, agent, device, args.num_instances, return_per_instance=True
+        eval_env,
+        agent,
+        device,
+        args.num_instances,
+        return_per_instance=True,
+        return_control_points=compute_cl,
     )
     eval_env.unwrapped.set_fixed_instances(instances, reset_idx=True)
     linear = run_linear_baseline_eval(
-        eval_env, args.num_instances, return_per_instance=True
+        eval_env,
+        args.num_instances,
+        return_per_instance=True,
+        return_path_points=compute_cl,
     )
 
     # Aggregate stats for output (exclude per-instance lists from printed summary)
     def _summary(d: dict):
-        exclude = {"total_step_attempts_list", "total_newton_iterations_list"}
+        exclude = {
+            "total_step_attempts_list",
+            "total_newton_iterations_list",
+            "control_points_list",
+            "linear_path_points_list",
+            "condition_length_list",
+        }
         return {k: v for k, v in (d or {}).items() if k not in exclude}
+
+    # Condition length stats (Bezier and linear paths, full / non-monic polynomial)
+    if compute_cl and bezier and linear:
+        ctrl_list = bezier.get("control_points_list") or []
+        path_list = linear.get("linear_path_points_list") or []
+        if ctrl_list and path_list and len(ctrl_list) == len(path_list):
+            from condition_length import (
+                ConditionLengthConfig,
+                calculate_bezier_condition_length_numeric,
+                calculate_linear_condition_length_numeric,
+            )
+
+            cl_cfg = ConditionLengthConfig(
+                samples_per_segment=args.condition_length_samples,
+            )
+            cl_bezier_list = []
+            cl_linear_list = []
+            for ctrl in ctrl_list:
+                # ctrl: (d+1, num_coeffs) complex128, ascending
+                P_ri = torch.from_numpy(
+                    np.stack([ctrl.real, ctrl.imag], axis=-1)
+                ).to(torch.float64)
+                cl_b = calculate_bezier_condition_length_numeric(
+                    P_ri, loss_cfg=cl_cfg
+                )
+                cl_bezier_list.append(float(cl_b.item()))
+            for pts in path_list:
+                # pts: (2, num_coeffs) complex128, ascending
+                P_ri = torch.from_numpy(
+                    np.stack([pts.real, pts.imag], axis=-1)
+                ).to(torch.float64)
+                cl_l = calculate_linear_condition_length_numeric(
+                    P_ri, loss_cfg=cl_cfg
+                )
+                cl_linear_list.append(float(cl_l.item()))
+            if cl_bezier_list:
+                arr_b = np.array(cl_bezier_list, dtype=np.float64)
+                bezier["condition_length_mean"] = float(np.mean(arr_b))
+                bezier["condition_length_median"] = float(np.median(arr_b))
+                bezier["condition_length_std"] = float(np.std(arr_b))
+                bezier["condition_length_min"] = float(np.min(arr_b))
+                bezier["condition_length_max"] = float(np.max(arr_b))
+                bezier["condition_length_list"] = cl_bezier_list
+            if cl_linear_list:
+                arr_l = np.array(cl_linear_list, dtype=np.float64)
+                linear["condition_length_mean"] = float(np.mean(arr_l))
+                linear["condition_length_median"] = float(np.median(arr_l))
+                linear["condition_length_std"] = float(np.std(arr_l))
+                linear["condition_length_min"] = float(np.min(arr_l))
+                linear["condition_length_max"] = float(np.max(arr_l))
+                linear["condition_length_list"] = cl_linear_list
 
     out = {
         "model_path": args.model_path,
@@ -365,7 +448,8 @@ def main():
         group4 = [k for k in all_keys if k == "tracking_cost_mean"]
         group5 = sorted([k for k in all_keys if "total_newton_iterations" in k], key=_metric_sort_key)
         group6 = sorted([k for k in all_keys if "tracking_time_sec" in k], key=_metric_sort_key)
-        key_groups = [g for g in (group1, group2, group3, group4, group5, group6) if g]
+        group7 = sorted([k for k in all_keys if "condition_length" in k], key=_metric_sort_key)
+        key_groups = [g for g in (group1, group2, group3, group4, group5, group6, group7) if g]
         def _label_len(key):
             if "tracking_time_sec" in key:
                 return len(key.replace("tracking_time_sec", "tracking_time", 1)) + 5  # "(ms)" suffix
@@ -379,10 +463,15 @@ def main():
         for gi, keys in enumerate(key_groups):
             for k in keys:
                 bv, lv = b.get(k, ""), l.get(k, "")
-                # Time metrics: display in ms (sec * 1000), 2 decimal places. Others: 1 decimal place.
+                # Time: ms with 4 decimals. Condition length: 4 decimals. Others: 1 decimal place.
                 is_time = "tracking_time_sec" in k
-                fmt = ".4f" if is_time else ".1f"
-                scale = 1000.0 if is_time else 1.0
+                is_condition_length = "condition_length" in k
+                if is_time:
+                    fmt, scale = ".4f", 1000.0
+                elif is_condition_length:
+                    fmt, scale = ".4f", 1.0
+                else:
+                    fmt, scale = ".1f", 1.0
                 if isinstance(bv, (int, float)):
                     sb = f"{float(bv) * scale:{fmt}}"
                 else:

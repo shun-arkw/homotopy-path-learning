@@ -22,9 +22,11 @@ def run_fixed_eval(
     num_instances: int,
     force_action_zero: bool = False,
     return_per_instance: bool = False,
+    return_control_points: bool = False,
 ) -> dict:
     """Run policy (agent) on fixed eval instances; return mean metrics dict.
     If return_per_instance=True, adds "total_step_attempts_list" and "total_newton_iterations_list" to the returned dict.
+    If return_control_points=True, adds "control_points_list": each element (d+1, num_coeffs) complex128.
     """
     successes = []
     tracking_costs = []
@@ -33,6 +35,7 @@ def run_fixed_eval(
     total_newton_iters = []
     accepted_steps = []
     rejected_steps = []
+    control_points_list = [] if return_control_points else None
     zero_action = None
     if force_action_zero:
         zero_action = np.zeros(eval_env.action_space.shape, dtype=np.float32)
@@ -61,6 +64,10 @@ def run_fixed_eval(
                 total_newton_iters.append(float(last_info.get("total_newton_iterations", 0.0)))
                 accepted_steps.append(float(last_info.get("accepted_steps", 0.0)))
                 rejected_steps.append(float(last_info.get("rejected_steps", 0.0)))
+                if return_control_points:
+                    base_env = eval_env.unwrapped
+                    ctrl = base_env._build_control_points()
+                    control_points_list.append(ctrl)
     if not successes:
         return {}
     total_attempts_arr = np.array(total_attempts, dtype=np.float64)
@@ -95,14 +102,20 @@ def run_fixed_eval(
         out["total_step_attempts_list"] = list(total_attempts)
         if total_newton_iters:
             out["total_newton_iterations_list"] = list(total_newton_iters)
+    if return_control_points and control_points_list:
+        out["control_points_list"] = control_points_list
     return out
 
 
 def run_linear_baseline_eval(
-    eval_env, num_instances: int, return_per_instance: bool = False
+    eval_env,
+    num_instances: int,
+    return_per_instance: bool = False,
+    return_path_points: bool = False,
 ) -> dict:
     """Run linear-path baseline via Julia linear homotopy; return mean metrics dict.
     If return_per_instance=True, adds "total_step_attempts_list" and "total_newton_iterations_list" to the returned dict.
+    If return_path_points=True, adds "linear_path_points_list": each (2, num_coeffs) complex128 [start_path, target].
     """
     successes = []
     tracking_costs = []
@@ -111,6 +124,7 @@ def run_linear_baseline_eval(
     total_newton_iters = []
     accepted_steps = []
     rejected_steps = []
+    linear_path_points_list = [] if return_path_points else None
     base_env = eval_env.unwrapped
     backend = base_env.backend
     linear_cfg = LinearUnivarConfig(
@@ -163,6 +177,8 @@ def run_linear_baseline_eval(
         total_newton_iters.append(float(newton_iters))
         accepted_steps.append(float(acc))
         rejected_steps.append(float(rej))
+        if return_path_points:
+            linear_path_points_list.append(np.stack([start_path, target_coeffs], axis=0))
     if not successes:
         return {}
     total_attempts_arr = np.array(total_attempts, dtype=np.float64)
@@ -197,4 +213,6 @@ def run_linear_baseline_eval(
         out["total_step_attempts_list"] = list(total_attempts)
         if total_newton_iters:
             out["total_newton_iterations_list"] = list(total_newton_iters)
+    if return_path_points and linear_path_points_list:
+        out["linear_path_points_list"] = linear_path_points_list
     return out
