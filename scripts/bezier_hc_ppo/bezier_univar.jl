@@ -124,8 +124,102 @@ Base.size(::BezierUnivarPoly) = (1, 1)
 ModelKit.variables(::BezierUnivarPoly) = [Variable(:x)]
 ModelKit.parameters(::BezierUnivarPoly) = Variable[]
 
+# ---------- db=2,3,4,5 dedicated (closed-form Bernstein, no de Casteljau) ----------
+function _eval_coeffs0!_db2!(H::BezierUnivarPoly, τ::Float64)
+    u = 1.0 - τ
+    u2 = u * u
+    s2 = τ * τ
+    w0 = u2
+    w1 = 2.0 * u * τ
+    w2 = s2
+    ncoef = H.degree + 1
+    c = H.ctrl
+    out = H.ceff0
+    @inbounds for i in 1:ncoef
+        out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i]
+    end
+    return out
+end
+
+function _eval_coeffs0!_db3!(H::BezierUnivarPoly, τ::Float64)
+    u = 1.0 - τ
+    u2 = u * u
+    u3 = u2 * u
+    s2 = τ * τ
+    s3 = s2 * τ
+    w0 = u3
+    w1 = 3.0 * u2 * τ
+    w2 = 3.0 * u * s2
+    w3 = s3
+    ncoef = H.degree + 1
+    c = H.ctrl
+    out = H.ceff0
+    @inbounds for i in 1:ncoef
+        out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i] + w3 * c[4, i]
+    end
+    return out
+end
+
+function _eval_coeffs0!_db4!(H::BezierUnivarPoly, τ::Float64)
+    u = 1.0 - τ
+    u2 = u * u
+    u3 = u2 * u
+    u4 = u3 * u
+    s2 = τ * τ
+    s3 = s2 * τ
+    s4 = s3 * τ
+    w0 = u4
+    w1 = 4.0 * u3 * τ
+    w2 = 6.0 * u2 * s2
+    w3 = 4.0 * u * s3
+    w4 = s4
+    ncoef = H.degree + 1
+    c = H.ctrl
+    out = H.ceff0
+    @inbounds for i in 1:ncoef
+        out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i] + w3 * c[4, i] + w4 * c[5, i]
+    end
+    return out
+end
+
+function _eval_coeffs0!_db5!(H::BezierUnivarPoly, τ::Float64)
+    u = 1.0 - τ
+    u2 = u * u
+    u3 = u2 * u
+    u4 = u3 * u
+    u5 = u4 * u
+    s2 = τ * τ
+    s3 = s2 * τ
+    s4 = s3 * τ
+    s5 = s4 * τ
+    w0 = u5
+    w1 = 5.0 * u4 * τ
+    w2 = 10.0 * u3 * s2
+    w3 = 10.0 * u2 * s3
+    w4 = 5.0 * u * s4
+    w5 = s5
+    ncoef = H.degree + 1
+    c = H.ctrl
+    out = H.ceff0
+    @inbounds for i in 1:ncoef
+        out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i] + w3 * c[4, i] + w4 * c[5, i] + w5 * c[6, i]
+    end
+    return out
+end
+
 function eval_coeffs0!(H::BezierUnivarPoly, τ::Float64)
-    w = H.wbufs[1]                    # length bezier_degree+1
+    db = H.bezier_degree
+    if db == 2
+        return _eval_coeffs0!_db2!(H, τ)
+    elseif db == 3
+        return _eval_coeffs0!_db3!(H, τ)
+    elseif db == 4
+        return _eval_coeffs0!_db4!(H, τ)
+    elseif db == 5
+        return _eval_coeffs0!_db5!(H, τ)
+    end
+    # generic: de Casteljau
+    w = H.wbufs[1]
     bernstein_weights_casteljau!(w, τ)
     ncoef = H.degree + 1
     @inbounds for i in 1:ncoef
@@ -136,6 +230,50 @@ function eval_coeffs0!(H::BezierUnivarPoly, τ::Float64)
         H.ceff0[i] = s
     end
     return H.ceff0
+end
+
+# Closed-form Bernstein weights for degree 1..4 (for eval_coeffs_k! when db=2..5)
+@inline function _bernstein_weights_deg1!(w::Vector{Float64}, s::Float64)
+    u = 1.0 - s
+    w[1] = u
+    w[2] = s
+    return w
+end
+@inline function _bernstein_weights_deg2!(w::Vector{Float64}, s::Float64)
+    u = 1.0 - s
+    u2 = u * u
+    s2 = s * s
+    w[1] = u2
+    w[2] = 2.0 * u * s
+    w[3] = s2
+    return w
+end
+@inline function _bernstein_weights_deg3!(w::Vector{Float64}, s::Float64)
+    u = 1.0 - s
+    u2 = u * u
+    u3 = u2 * u
+    s2 = s * s
+    s3 = s2 * s
+    w[1] = u3
+    w[2] = 3.0 * u2 * s
+    w[3] = 3.0 * u * s2
+    w[4] = s3
+    return w
+end
+@inline function _bernstein_weights_deg4!(w::Vector{Float64}, s::Float64)
+    u = 1.0 - s
+    u2 = u * u
+    u3 = u2 * u
+    u4 = u3 * u
+    s2 = s * s
+    s3 = s2 * s
+    s4 = s3 * s
+    w[1] = u4
+    w[2] = 4.0 * u3 * s
+    w[3] = 6.0 * u2 * s2
+    w[4] = 4.0 * u * s3
+    w[5] = s4
+    return w
 end
 
 function eval_coeffs_k!(out::Vector{ComplexF64}, H::BezierUnivarPoly, τ::Float64, k::Int)
@@ -150,11 +288,26 @@ function eval_coeffs_k!(out::Vector{ComplexF64}, H::BezierUnivarPoly, τ::Float6
     end
     deg = H.bezier_degree - k
     w = H.wbufs[k+1]                  # length deg+1
-    bernstein_weights_casteljau!(w, τ)
     Dk = H.diffs[k]                   # (deg+1, degree+1)
     fac = fallfac(H.bezier_degree, k)
-
     ncoef = H.degree + 1
+
+    # Use closed-form weights when db=2..5 and deg=1..4
+    db = H.bezier_degree
+    if 2 <= db <= 5 && 1 <= deg <= 4
+        if deg == 1
+            _bernstein_weights_deg1!(w, τ)
+        elseif deg == 2
+            _bernstein_weights_deg2!(w, τ)
+        elseif deg == 3
+            _bernstein_weights_deg3!(w, τ)
+        else
+            _bernstein_weights_deg4!(w, τ)
+        end
+    else
+        bernstein_weights_casteljau!(w, τ)
+    end
+
     @inbounds for i in 1:ncoef
         s = 0.0 + 0im
         for j in 1:(deg+1)
