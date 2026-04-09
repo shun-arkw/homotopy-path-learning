@@ -125,7 +125,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
         hc_extended_precision: bool = False,
     ):
         super().__init__()
-        assert bezier_degree in (2, 3), "Only bezier_degree=2 or 3 is supported."
+        assert bezier_degree >= 2, "bezier_degree must be >= 2 (2, 3, 4, ... supported)."
         assert latent_dim_m > 0
         assert episode_len_T > 0
 
