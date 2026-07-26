@@ -1,0 +1,12 @@
+name = "HomotopyPathLearning"
+uuid = "6cf043a1-50cf-4e2d-95ca-2fd8e599e3a4"
+authors = ["homotopy-path-learning contributors"]
+version = "0.1.0"
+
+[deps]
+HomotopyContinuation = "f213a82b-91d6-5c5d-acf7-10f1c761b327"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+julia = "1.5"
