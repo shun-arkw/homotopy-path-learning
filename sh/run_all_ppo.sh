@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 NUM_GPUS=1
 JULIA_THREADS=20
-RUN_TZ_DEFAULT="Europe/Paris" # Europe/Paris, Asia/Tokyo, UTC
+RUN_TZ_DEFAULT="Asia/Tokyo" # Europe/Paris, Asia/Tokyo, UTC
 
 # Override NUM_GPUS by first argument if given (e.g. bash sh/run_all_ppo.sh 4)
 [[ -n "${1:-}" ]] && NUM_GPUS="$1"
@@ -44,6 +44,7 @@ terminal_linear_bonus_coef=10.0
 terminal_z0_bonus=false
 terminal_z0_bonus_coef=2.0
 step_reward_scale=0.2
+tracking_cost_mode=steps
 require_z0_success=true
 z0_max_tries=20
 hc_gamma_trick=false
@@ -125,6 +126,7 @@ run_one_ppo() {
         $([ "$terminal_z0_bonus" = true ] && echo "--terminal-z0-bonus") \
         --terminal-z0-bonus-coef "$terminal_z0_bonus_coef" \
         --step-reward-scale "$step_reward_scale" \
+        --tracking-cost-mode "$tracking_cost_mode" \
         $([ "$require_z0_success" = true ] && echo "--require-z0-success") \
         --z0-max-tries "$z0_max_tries" \
         $([ "$hc_gamma_trick" = true ] && echo "--hc-gamma-trick") \

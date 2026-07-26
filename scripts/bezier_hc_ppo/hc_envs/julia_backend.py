@@ -18,6 +18,8 @@ class BezierUnivarConfig:
     max_initial_step_size: float = MAX_STEP_SIZE 
     min_step_size: float = 1e-12
     extended_precision: bool = False
+    # TrackerOptions (shared with LinearUnivarConfig)
+    automatic_differentiation: int = 1
     # HC TrackerParameters (shared with LinearUnivarConfig)
     hc_a: float = 0.125
     hc_beta_a: float = 1.0
@@ -37,6 +39,8 @@ class LinearUnivarConfig:
     max_initial_step_size: float = MAX_STEP_SIZE 
     min_step_size: float = 1e-12
     extended_precision: bool = False
+    # TrackerOptions (shared with BezierUnivarConfig)
+    automatic_differentiation: int = 1
     # HC TrackerParameters (shared with BezierUnivarConfig)
     hc_a: float = 0.125
     hc_beta_a: float = 1.0
@@ -50,7 +54,7 @@ class JuliaBackend:
     """
     Process-wide backend for Julia init + warmup.
     - Assumes a single Julia session per process (juliacall Main).
-    - Caches initialization by (degree, bezier_degree, extended_precision, compute_newton_iters).
+    - Caches initialization by tracker options including automatic_differentiation.
     """
 
     def __init__(self) -> None:
@@ -64,6 +68,7 @@ class JuliaBackend:
             cfg.bezier_degree,
             cfg.extended_precision,
             cfg.compute_newton_iters,
+            cfg.automatic_differentiation,
             cfg.max_steps,
             cfg.max_step_size,
             cfg.max_initial_step_size,
@@ -89,6 +94,7 @@ class JuliaBackend:
             max_step_size=float(cfg.max_step_size),
             max_initial_step_size=float(cfg.max_initial_step_size),
             min_step_size=float(cfg.min_step_size),
+            automatic_differentiation=int(cfg.automatic_differentiation),
             hc_a=float(cfg.hc_a),
             hc_beta_a=float(cfg.hc_beta_a),
             hc_beta_omega_p=float(cfg.hc_beta_omega_p),
@@ -115,6 +121,7 @@ class JuliaBackend:
             cfg.degree,
             cfg.extended_precision,
             cfg.compute_newton_iters,
+            cfg.automatic_differentiation,
             cfg.max_steps,
             cfg.max_step_size,
             cfg.max_initial_step_size,
@@ -138,6 +145,7 @@ class JuliaBackend:
             max_step_size=float(cfg.max_step_size),
             max_initial_step_size=float(cfg.max_initial_step_size),
             min_step_size=float(cfg.min_step_size),
+            automatic_differentiation=int(cfg.automatic_differentiation),
             hc_a=float(cfg.hc_a),
             hc_beta_a=float(cfg.hc_beta_a),
             hc_beta_omega_p=float(cfg.hc_beta_omega_p),

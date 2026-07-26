@@ -25,7 +25,7 @@ def run_fixed_eval(
     return_control_points: bool = False,
 ) -> dict:
     """Run policy (agent) on fixed eval instances; return mean metrics dict.
-    If return_per_instance=True, adds "total_step_attempts_list" and "total_newton_iterations_list" to the returned dict.
+    If return_per_instance=True, adds step/newton/eaj per-instance lists to the returned dict.
     If return_control_points=True, adds "control_points_list": each element (d+1, num_coeffs) complex128.
     """
     successes = []
@@ -33,6 +33,7 @@ def run_fixed_eval(
     tracking_time_secs = []
     total_attempts = []
     total_newton_iters = []
+    total_eaj_calls = []
     accepted_steps = []
     rejected_steps = []
     control_points_list = [] if return_control_points else None
@@ -62,6 +63,9 @@ def run_fixed_eval(
                 tracking_time_secs.append(float(last_info.get("tracking_time_sec", 0.0)))
                 total_attempts.append(float(last_info.get("total_step_attempts", 0.0)))
                 total_newton_iters.append(float(last_info.get("total_newton_iterations", 0.0)))
+                total_eaj_calls.append(
+                    float(last_info.get("total_evaluate_and_jacobian_calls", 0.0))
+                )
                 accepted_steps.append(float(last_info.get("accepted_steps", 0.0)))
                 rejected_steps.append(float(last_info.get("rejected_steps", 0.0)))
                 if return_control_points:
@@ -98,10 +102,24 @@ def run_fixed_eval(
         out["total_newton_iterations_min"] = float(np.min(newton_arr))
         out["total_newton_iterations_max"] = float(np.max(newton_arr))
         out["total_newton_iterations_std"] = float(np.std(newton_arr))
+    if total_eaj_calls:
+        eaj_arr = np.array(total_eaj_calls, dtype=np.float64)
+        out["total_evaluate_and_jacobian_calls_mean"] = float(np.mean(total_eaj_calls))
+        out["total_evaluate_and_jacobian_calls_median"] = float(np.median(eaj_arr))
+        out["total_evaluate_and_jacobian_calls_min"] = float(np.min(eaj_arr))
+        out["total_evaluate_and_jacobian_calls_max"] = float(np.max(eaj_arr))
+        out["total_evaluate_and_jacobian_calls_std"] = float(np.std(eaj_arr))
     if return_per_instance:
+        out["success_list"] = list(successes)
+        out["tracking_cost_list"] = list(tracking_costs)
+        out["tracking_time_sec_list"] = list(tracking_time_secs)
         out["total_step_attempts_list"] = list(total_attempts)
         if total_newton_iters:
             out["total_newton_iterations_list"] = list(total_newton_iters)
+        if total_eaj_calls:
+            out["total_evaluate_and_jacobian_calls_list"] = list(total_eaj_calls)
+        out["accepted_steps_list"] = list(accepted_steps)
+        out["rejected_steps_list"] = list(rejected_steps)
     if return_control_points and control_points_list:
         out["control_points_list"] = control_points_list
     return out
@@ -114,7 +132,7 @@ def run_linear_baseline_eval(
     return_path_points: bool = False,
 ) -> dict:
     """Run linear-path baseline via Julia linear homotopy; return mean metrics dict.
-    If return_per_instance=True, adds "total_step_attempts_list" and "total_newton_iterations_list" to the returned dict.
+    If return_per_instance=True, adds step/newton/eaj per-instance lists to the returned dict.
     If return_path_points=True, adds "linear_path_points_list": each (2, num_coeffs) complex128 [start_path, target].
     """
     successes = []
@@ -122,6 +140,7 @@ def run_linear_baseline_eval(
     tracking_time_secs = []
     total_attempts = []
     total_newton_iters = []
+    total_eaj_calls = []
     accepted_steps = []
     rejected_steps = []
     linear_path_points_list = [] if return_path_points else None
@@ -159,22 +178,23 @@ def run_linear_baseline_eval(
             target_coeffs,
             compute_newton_iters=bool(base_env.compute_newton_iters),
         )
-        success = bool(out.success_flag)
-        acc = int(out.total_accepted_steps)
-        rej = int(out.total_rejected_steps)
-        attempts = int(out.total_step_attempts)
-        newton_iters = int(getattr(out, "total_newton_iterations", 0))
+        (
+            success,
+            acc,
+            rej,
+            attempts,
+            newton_iters,
+            eaj_calls,
+        ) = base_env._tracking_metrics_from_out(out)
         tracking_time_sec = float(getattr(out, "tracking_time_sec", 0.0))
-        if success:
-            tracking_cost = float(acc + base_env.rho * rej)
-        else:
-            tracking_cost = float(base_env.failure_penalty)
+        tracking_cost = base_env._compute_tracking_cost(success, acc, rej, eaj_calls)
 
         successes.append(float(success))
         tracking_costs.append(tracking_cost)
         tracking_time_secs.append(tracking_time_sec)
         total_attempts.append(float(attempts))
         total_newton_iters.append(float(newton_iters))
+        total_eaj_calls.append(float(eaj_calls))
         accepted_steps.append(float(acc))
         rejected_steps.append(float(rej))
         if return_path_points:
@@ -209,10 +229,24 @@ def run_linear_baseline_eval(
         out["total_newton_iterations_min"] = float(np.min(newton_arr))
         out["total_newton_iterations_max"] = float(np.max(newton_arr))
         out["total_newton_iterations_std"] = float(np.std(newton_arr))
+    if total_eaj_calls:
+        eaj_arr = np.array(total_eaj_calls, dtype=np.float64)
+        out["total_evaluate_and_jacobian_calls_mean"] = float(np.mean(total_eaj_calls))
+        out["total_evaluate_and_jacobian_calls_median"] = float(np.median(eaj_arr))
+        out["total_evaluate_and_jacobian_calls_min"] = float(np.min(eaj_arr))
+        out["total_evaluate_and_jacobian_calls_max"] = float(np.max(eaj_arr))
+        out["total_evaluate_and_jacobian_calls_std"] = float(np.std(eaj_arr))
     if return_per_instance:
+        out["success_list"] = list(successes)
+        out["tracking_cost_list"] = list(tracking_costs)
+        out["tracking_time_sec_list"] = list(tracking_time_secs)
         out["total_step_attempts_list"] = list(total_attempts)
         if total_newton_iters:
             out["total_newton_iterations_list"] = list(total_newton_iters)
+        if total_eaj_calls:
+            out["total_evaluate_and_jacobian_calls_list"] = list(total_eaj_calls)
+        out["accepted_steps_list"] = list(accepted_steps)
+        out["rejected_steps_list"] = list(rejected_steps)
     if return_path_points and linear_path_points_list:
         out["linear_path_points_list"] = linear_path_points_list
     return out

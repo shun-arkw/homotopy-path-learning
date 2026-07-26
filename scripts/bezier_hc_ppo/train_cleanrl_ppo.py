@@ -47,6 +47,26 @@ def main():
         dest="step_reward_scale",
     )
     parser.add_argument(
+        "--reward-mode",
+        type=str,
+        default="delta",
+        choices=("delta", "baseline", "terminal", "best"),
+        dest="reward_mode",
+        help=(
+            "Reward shaping in the env: delta=previous cost reduction, "
+            "baseline=linear/z0 baseline minus current cost, "
+            "terminal=only terminal bonuses, best=accept best-so-far proposals."
+        ),
+    )
+    parser.add_argument(
+        "--tracking-cost-mode",
+        type=str,
+        default="steps",
+        choices=("steps", "eaj"),
+        dest="tracking_cost_mode",
+        help="Tracking cost definition used by the env.",
+    )
+    parser.add_argument(
         "--require-z0-success",
         action="store_true",
         dest="require_z0_success",
@@ -100,12 +120,17 @@ def main():
     parser.add_argument("--num-minibatches", type=int, default=32, dest="num_minibatches")
     parser.add_argument("--gamma", type=float, default=0.99, dest="gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95, dest="gae_lambda")
+    parser.add_argument("--ent-coef", type=float, default=0.0, dest="ent_coef")
+    parser.add_argument("--reward-clip-abs", type=float, default=10.0, dest="reward_clip_abs")
+    parser.add_argument("--use-reward-normalization", type=int, default=1, dest="use_reward_normalization")
+    parser.add_argument("--actor-logstd-init", type=float, default=0.0, dest="actor_logstd_init")
 
     # Logging / tracking (forwarded to CleanRL tyro Args)
     parser.add_argument("--eval-interval", type=int, default=10, dest="eval_interval")
     parser.add_argument("--eval-num-instances", type=int, default=256, dest="eval_num_instances")
     parser.add_argument("--eval-seed", type=int, default=0, dest="eval_seed")
     parser.add_argument("--eval-linear-baseline", action="store_true", dest="eval_linear_baseline")
+    parser.add_argument("--eval-zero-action", action="store_true", dest="eval_zero_action")
     parser.add_argument("--save-model", action="store_true", dest="save_model", help="Save model to save_dir/run_name after training.")
     parser.add_argument("--save-dir", type=str, default="runs", dest="save_dir", help="Base directory for run logs and saved model.")
     parser.add_argument("--track", action="store_true")
@@ -127,6 +152,8 @@ def main():
     os.environ["BH_TERMINAL_Z0_BONUS"] = "1" if args.terminal_z0_bonus else "0"
     os.environ["BH_TERMINAL_Z0_BONUS_COEF"] = str(args.terminal_z0_bonus_coef)
     os.environ["BH_STEP_REWARD_SCALE"] = str(args.step_reward_scale)
+    os.environ["BH_REWARD_MODE"] = str(args.reward_mode)
+    os.environ["BH_TRACKING_COST_MODE"] = str(args.tracking_cost_mode)
     os.environ["BH_REQUIRE_Z0_SUCCESS"] = "1" if args.require_z0_success else "0"
     os.environ["BH_Z0_MAX_TRIES"] = str(args.z0_max_tries)
     os.environ["BH_GAMMA_TRICK"] = "1" if args.hc_gamma_trick else "0"
@@ -170,12 +197,18 @@ def main():
         "--num-minibatches", str(args.num_minibatches),
         "--gamma", str(args.gamma),
         "--gae-lambda", str(args.gae_lambda),
+        "--ent-coef", str(args.ent_coef),
+        "--reward-clip-abs", str(args.reward_clip_abs),
+        "--use-reward-normalization", str(args.use_reward_normalization),
+        "--actor-logstd-init", str(args.actor_logstd_init),
         "--eval-interval", str(args.eval_interval),
         "--eval-num-instances", str(args.eval_num_instances),
         "--eval-seed", str(args.eval_seed),
     ]
     if args.eval_linear_baseline:
         cmd.append("--eval-linear-baseline")
+    if args.eval_zero_action:
+        cmd.append("--eval-zero-action")
     if args.save_model:
         cmd.append("--save-model")
     cmd += ["--save-dir", args.save_dir]

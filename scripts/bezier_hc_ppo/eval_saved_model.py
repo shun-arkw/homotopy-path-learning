@@ -3,14 +3,15 @@
 Load a trained PPO model and evaluate on a fixed validation set.
 Compares Bezier (policy) vs linear path (single gamma) on the same instances.
 
-Usage (from repo root, env params must match training e.g. run_ppo.sh):
+Usage (from repo root): requires config.json next to the model (saved at training time),
+including env.tracking_cost_mode (steps | eaj).
+
   python3 scripts/bezier_hc_ppo/eval_saved_model.py --model-path runs/.../ppo_continuous_action.cleanrl_model
 
-Or with explicit env params (defaults match run_ppo.sh):
-  python3 scripts/bezier_hc_ppo/eval_saved_model.py --model-path RUNS/.../model.cleanrl_model \\
-    --degree 20 --bezier-degree 3 --num-instances 256
+Other CLI env flags override config defaults when present; tracking_cost_mode always comes from config.json.
 """
 import argparse
+import gzip
 import json
 import os
 import sys
@@ -27,6 +28,13 @@ def _env_args(parser):
     parser.add_argument("--worst-k", type=int, default=0, dest="worst_k", help="Number of worst improvement instances to report (0 = disabled, default: 0)")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--save-results", type=str, default=None, dest="save_results", help="Write JSON results to this path")
+    parser.add_argument(
+        "--save-per-instance-jsonl-gz",
+        type=str,
+        default=None,
+        dest="save_per_instance_jsonl_gz",
+        help="Write per-instance detailed records as jsonl.gz",
+    )
 
     # Env (must match training)
     parser.add_argument("--degree", type=int, default=20)
@@ -42,6 +50,13 @@ def _env_args(parser):
     parser.add_argument("--terminal-z0-bonus", action="store_true", dest="terminal_z0_bonus")
     parser.add_argument("--terminal-z0-bonus-coef", type=float, default=2.0, dest="terminal_z0_bonus_coef")
     parser.add_argument("--step-reward-scale", type=float, default=0.2, dest="step_reward_scale")
+    parser.add_argument(
+        "--reward-mode",
+        type=str,
+        default="delta",
+        choices=("delta", "baseline", "terminal", "best"),
+        dest="reward_mode",
+    )
     parser.add_argument("--require-z0-success", action="store_true", dest="require_z0_success")
     parser.add_argument("--z0-max-tries", type=int, default=20, dest="z0_max_tries")
     parser.add_argument(
@@ -61,6 +76,8 @@ def _env_args(parser):
     parser.add_argument("--target-low-imag", type=float, default=-5, dest="target_low_imag")
     parser.add_argument("--target-high-imag", type=float, default=5, dest="target_high_imag")
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--use-reward-normalization", type=int, default=0, dest="use_reward_normalization")
+    parser.add_argument("--reward-clip-abs", type=float, default=0.0, dest="reward_clip_abs")
     parser.add_argument(
         "--compute-newton-iters",
         type=str,
@@ -101,6 +118,8 @@ def set_env_from_args(args):
     os.environ.setdefault("BH_TERMINAL_Z0_BONUS", "1" if args.terminal_z0_bonus else "0")
     os.environ.setdefault("BH_TERMINAL_Z0_BONUS_COEF", str(args.terminal_z0_bonus_coef))
     os.environ.setdefault("BH_STEP_REWARD_SCALE", str(args.step_reward_scale))
+    os.environ.setdefault("BH_REWARD_MODE", str(args.reward_mode))
+    os.environ.setdefault("BH_TRACKING_COST_MODE", str(args.tracking_cost_mode))
     os.environ.setdefault("BH_REQUIRE_Z0_SUCCESS", "1" if args.require_z0_success else "0")
     os.environ.setdefault("BH_Z0_MAX_TRIES", str(args.z0_max_tries))
     os.environ.setdefault("BH_GAMMA_TRICK", "1" if args.hc_gamma_trick else "0")
@@ -128,6 +147,32 @@ def _load_run_config(model_path: str) -> dict | None:
         return json.load(f)
 
 
+def _normalized_tracking_cost_mode(run_config: dict) -> str:
+    """Require env.tracking_cost_mode in config.json (steps | eaj)."""
+    env = run_config.get("env")
+    if not isinstance(env, dict):
+        print("Error: config.json must contain an object env.", file=sys.stderr)
+        sys.exit(1)
+    if "tracking_cost_mode" not in env:
+        print(
+            "Error: config.json env.tracking_cost_mode is required (e.g. steps or eaj).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    raw = env["tracking_cost_mode"]
+    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+        print("Error: env.tracking_cost_mode must be non-empty.", file=sys.stderr)
+        sys.exit(1)
+    mode = str(raw).strip().lower()
+    if mode not in ("steps", "eaj"):
+        print(
+            f"Error: env.tracking_cost_mode must be 'steps' or 'eaj', got {raw!r}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return mode
+
+
 def _apply_hc_tracker_config(run_config: dict) -> None:
     """Set BH_HC_* env vars from config.json hc_tracker_params and hc_tracker_options."""
     def _set(k: str, v) -> None:
@@ -148,22 +193,29 @@ def main():
     # Get model_path first so we can load run config, then set config as parser defaults so CLI overrides
     args_pre, _ = parser.parse_known_args()
     run_config = _load_run_config(args_pre.model_path)
-    if run_config:
-        flat = {}
-        for key, value in run_config.items():
-            if isinstance(value, dict):
-                for k, v in value.items():
-                    if hasattr(args_pre, k):
-                        flat[k] = v
-            elif hasattr(args_pre, key):
-                flat[key] = value
-        if flat:
-            parser.set_defaults(**flat)
+    if not run_config:
+        run_dir = os.path.dirname(os.path.abspath(args_pre.model_path))
+        print(
+            f"Error: config.json not found next to model (expected: {run_dir}/config.json).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    tracking_cost_mode = _normalized_tracking_cost_mode(run_config)
+    flat = {}
+    for key, value in run_config.items():
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if hasattr(args_pre, k):
+                    flat[k] = v
+        elif hasattr(args_pre, key):
+            flat[key] = value
+    if flat:
+        parser.set_defaults(**flat)
     args = parser.parse_args()
+    args.tracking_cost_mode = tracking_cost_mode
 
     # Apply saved HC tracker config so eval uses same tracker as training
-    if run_config:
-        _apply_hc_tracker_config(run_config)
+    _apply_hc_tracker_config(run_config)
     # Newton iteration counting (env reads BH_COMPUTE_NEWTON_ITERS on register)
     os.environ["BH_COMPUTE_NEWTON_ITERS"] = "1" if (args.compute_newton_iters == "true") else "0"
     set_env_from_args(args)
@@ -182,9 +234,31 @@ def main():
     env_id = "hc_envs.register_env:BezierHomotopyUnivar-v0"
     run_name = "eval"
     gamma = args.gamma
+    use_reward_normalization = int(args.use_reward_normalization)
+    reward_clip_abs = float(args.reward_clip_abs)
 
-    eval_env = make_env(env_id, 0, False, run_name, gamma)()
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, False, run_name, gamma)])
+    eval_env = make_env(
+        env_id,
+        0,
+        False,
+        run_name,
+        gamma,
+        use_reward_normalization,
+        reward_clip_abs,
+    )()
+    envs = gym.vector.SyncVectorEnv(
+        [
+            make_env(
+                env_id,
+                0,
+                False,
+                run_name,
+                gamma,
+                use_reward_normalization,
+                reward_clip_abs,
+            )
+        ]
+    )
     device = torch.device(args.device)
 
     agent = Agent(envs).to(device)
@@ -196,20 +270,22 @@ def main():
     eval_env.unwrapped.set_fixed_instances(instances, reset_idx=True)
 
     compute_cl = args.compute_condition_length == "true"
+    save_per_instance = bool(args.save_per_instance_jsonl_gz)
+    need_ctrl = compute_cl or save_per_instance
     bezier = run_fixed_eval(
         eval_env,
         agent,
         device,
         args.num_instances,
         return_per_instance=True,
-        return_control_points=compute_cl,
+        return_control_points=need_ctrl,
     )
     eval_env.unwrapped.set_fixed_instances(instances, reset_idx=True)
     linear = run_linear_baseline_eval(
         eval_env,
         args.num_instances,
         return_per_instance=True,
-        return_path_points=compute_cl,
+        return_path_points=False,
     )
 
     # Aggregate stats for output (exclude per-instance lists from printed summary)
@@ -218,16 +294,19 @@ def main():
             "total_step_attempts_list",
             "total_newton_iterations_list",
             "control_points_list",
-            "linear_path_points_list",
             "condition_length_list",
+            "success_list",
+            "tracking_cost_list",
+            "tracking_time_sec_list",
+            "accepted_steps_list",
+            "rejected_steps_list",
         }
         return {k: v for k, v in (d or {}).items() if k not in exclude}
 
     # Condition length stats (Bezier and linear paths, full / non-monic polynomial)
     if compute_cl and bezier and linear:
         ctrl_list = bezier.get("control_points_list") or []
-        path_list = linear.get("linear_path_points_list") or []
-        if ctrl_list and path_list and len(ctrl_list) == len(path_list):
+        if ctrl_list and len(ctrl_list) == len(instances):
             from condition_length import (
                 ConditionLengthConfig,
                 calculate_bezier_condition_length_numeric,
@@ -240,7 +319,7 @@ def main():
             cl_bezier_list = []
             cl_linear_list = []
             for ctrl in ctrl_list:
-                # ctrl: (d+1, num_coeffs) complex128, ascending
+                # ctrl: (d+1, num_coeffs) complex128, descending [a_degree,...,a_0]
                 P_ri = torch.from_numpy(
                     np.stack([ctrl.real, ctrl.imag], axis=-1)
                 ).to(torch.float64)
@@ -248,8 +327,10 @@ def main():
                     P_ri, loss_cfg=cl_cfg
                 )
                 cl_bezier_list.append(float(cl_b.item()))
-            for pts in path_list:
-                # pts: (2, num_coeffs) complex128, ascending
+            for inst in instances:
+                start_path = inst.gamma * inst.start_coeffs
+                pts = np.stack([start_path, inst.target_coeffs], axis=0)
+                # pts: (2, num_coeffs) complex128, descending [a_degree,...,a_0]
                 P_ri = torch.from_numpy(
                     np.stack([pts.real, pts.imag], axis=-1)
                 ).to(torch.float64)
@@ -274,6 +355,82 @@ def main():
                 linear["condition_length_max"] = float(np.max(arr_l))
                 linear["condition_length_list"] = cl_linear_list
 
+    def _complex_vec_to_ri_list(arr):
+        z = np.asarray(arr, dtype=np.complex128)
+        return [[float(v.real), float(v.imag)] for v in z.reshape(-1)]
+
+    def _complex_mat_to_ri_list(arr):
+        z = np.asarray(arr, dtype=np.complex128)
+        return [[[float(v.real), float(v.imag)] for v in row] for row in z]
+
+    def _get_or_default(dct, key, n, default):
+        vals = (dct or {}).get(key)
+        if vals is None:
+            return [default for _ in range(n)]
+        if len(vals) < n:
+            vals = list(vals) + [default for _ in range(n - len(vals))]
+        return list(vals[:n])
+
+    def _save_per_instance_jsonl_gz(path: str, instances_seq, bez: dict, lin: dict):
+        n = len(instances_seq)
+        ctrl_list = (bez or {}).get("control_points_list") or []
+        has_ctrl = len(ctrl_list) >= n
+
+        b_success = _get_or_default(bez, "success_list", n, 0.0)
+        b_cost = _get_or_default(bez, "tracking_cost_list", n, 0.0)
+        b_time = _get_or_default(bez, "tracking_time_sec_list", n, 0.0)
+        b_attempts = _get_or_default(bez, "total_step_attempts_list", n, 0.0)
+        b_newton = _get_or_default(bez, "total_newton_iterations_list", n, 0.0)
+        b_acc = _get_or_default(bez, "accepted_steps_list", n, 0.0)
+        b_rej = _get_or_default(bez, "rejected_steps_list", n, 0.0)
+
+        l_success = _get_or_default(lin, "success_list", n, 0.0)
+        l_cost = _get_or_default(lin, "tracking_cost_list", n, 0.0)
+        l_time = _get_or_default(lin, "tracking_time_sec_list", n, 0.0)
+        l_attempts = _get_or_default(lin, "total_step_attempts_list", n, 0.0)
+        l_newton = _get_or_default(lin, "total_newton_iterations_list", n, 0.0)
+        l_acc = _get_or_default(lin, "accepted_steps_list", n, 0.0)
+        l_rej = _get_or_default(lin, "rejected_steps_list", n, 0.0)
+
+        with gzip.open(path, "wt", encoding="utf-8") as f:
+            for i, inst in enumerate(instances_seq):
+                rec = {
+                    "schema_version": 1,
+                    "instance_index": int(i),
+                    "coeff_order": "descending",
+                    "degree": int(args.degree),
+                    "bezier_degree": int(args.bezier_degree),
+                    "num_coeffs": int(args.degree + 1),
+                    "start_coeffs_ri": _complex_vec_to_ri_list(inst.start_coeffs),
+                    "target_coeffs_ri": _complex_vec_to_ri_list(inst.target_coeffs),
+                    "gamma_ri": [float(np.real(inst.gamma)), float(np.imag(inst.gamma))],
+                    "bezier_control_points_ri": _complex_mat_to_ri_list(ctrl_list[i]) if has_ctrl else None,
+                    "bezier": {
+                        "success_flag": bool(b_success[i]),
+                        "tracking_cost": float(b_cost[i]),
+                        "tracking_time_sec": float(b_time[i]),
+                        "total_step_attempts": float(b_attempts[i]),
+                        "total_newton_iterations": float(b_newton[i]),
+                        "total_accepted_steps": float(b_acc[i]),
+                        "total_rejected_steps": float(b_rej[i]),
+                    },
+                    "linear": {
+                        "success_flag": bool(l_success[i]),
+                        "tracking_cost": float(l_cost[i]),
+                        "tracking_time_sec": float(l_time[i]),
+                        "total_step_attempts": float(l_attempts[i]),
+                        "total_newton_iterations": float(l_newton[i]),
+                        "total_accepted_steps": float(l_acc[i]),
+                        "total_rejected_steps": float(l_rej[i]),
+                    },
+                    "delta": {
+                        "step_attempts_linear_minus_bezier": float(l_attempts[i] - b_attempts[i]),
+                        "newton_linear_minus_bezier": float(l_newton[i] - b_newton[i]),
+                        "tracking_time_sec_bezier_minus_linear": float(b_time[i] - l_time[i]),
+                    },
+                }
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
     out = {
         "model_path": args.model_path,
         "num_instances": args.num_instances,
@@ -291,23 +448,43 @@ def main():
         try:
             unregister_bezier_env()
             register_bezier_env()
-            eval_env_tt = make_env(env_id, 0, False, run_name, gamma)()
+            eval_env_tt = make_env(
+                env_id,
+                0,
+                False,
+                run_name,
+                gamma,
+                use_reward_normalization,
+                reward_clip_abs,
+            )()
             eval_env_tt.unwrapped.set_fixed_instances(instances, reset_idx=True)
             bezier_tt = run_fixed_eval(
-                eval_env_tt, agent, device, args.num_instances, return_per_instance=False
+                eval_env_tt,
+                agent,
+                device,
+                args.num_instances,
+                return_per_instance=True,
+                return_control_points=False,
             )
             eval_env_tt.unwrapped.set_fixed_instances(instances, reset_idx=True)
             linear_tt = run_linear_baseline_eval(
-                eval_env_tt, args.num_instances, return_per_instance=False
+                eval_env_tt,
+                args.num_instances,
+                return_per_instance=True,
+                return_path_points=False,
             )
             if out.get("bezier") and bezier_tt:
                 for key in list(out["bezier"].keys()):
                     if "tracking_time_sec" in key and key in bezier_tt:
                         out["bezier"][key] = bezier_tt[key]
+                if bezier and "tracking_time_sec_list" in bezier_tt:
+                    bezier["tracking_time_sec_list"] = list(bezier_tt["tracking_time_sec_list"])
             if out.get("linear") and linear_tt:
                 for key in list(out["linear"].keys()):
                     if "tracking_time_sec" in key and key in linear_tt:
                         out["linear"][key] = linear_tt[key]
+                if linear and "tracking_time_sec_list" in linear_tt:
+                    linear["tracking_time_sec_list"] = list(linear_tt["tracking_time_sec_list"])
             if hasattr(eval_env_tt, "close"):
                 eval_env_tt.close()
         except Exception as e:
@@ -519,6 +696,10 @@ def main():
         with open(log_path, "w") as f:
             f.write("\n".join(lines) + "\n")
         print(f"  log saved to {log_path}")
+
+    if args.save_per_instance_jsonl_gz:
+        _save_per_instance_jsonl_gz(args.save_per_instance_jsonl_gz, instances, bezier or {}, linear or {})
+        print(f"  per-instance saved to {args.save_per_instance_jsonl_gz}")
 
     return out
 

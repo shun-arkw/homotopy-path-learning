@@ -22,19 +22,22 @@
 # =============================================================================
 # 1. ENV / PROBLEM PARAMETERS
 # =============================================================================
-degree=30
-bezier_degree=3
+degree=40
+bezier_degree=4
 latent_dim=$degree
-episode_len=1
+episode_len=4
 alpha_z=2.0
 failure_penalty=3000
 rho=1.0
 seed=0
 terminal_linear_bonus=true
-terminal_linear_bonus_coef=10.0 # 10.0, 20.0, 30,0
+terminal_linear_bonus_coef=5.0
 terminal_z0_bonus=false # true
 terminal_z0_bonus_coef=2.0
-step_reward_scale=0.2
+step_reward_scale=1.0
+reward_mode=best
+# steps: accepted + rho * rejected; eaj: ModelKit.evaluate_and_jacobian call count
+tracking_cost_mode=steps
 require_z0_success=true
 z0_max_tries=20
 hc_gamma_trick=false
@@ -97,7 +100,7 @@ target_high_imag=5
 # =============================================================================
 # 4. PPO PARAMETERS
 # =============================================================================
-total_timesteps=1000000 # 1000000
+total_timesteps=4000000
 num_steps=2048
 num_envs=1
 learning_rate=0.0003
@@ -105,6 +108,10 @@ update_epochs=10
 num_minibatches=32
 gamma=0.99
 gae_lambda=0.95
+ent_coef=0.0
+reward_clip_abs=0.0
+use_reward_normalization=0
+actor_logstd_init=-1.2
 
 # =============================================================================
 # 5. EVAL & LOGGING
@@ -113,7 +120,7 @@ eval_interval=10
 eval_num_instances=1024
 eval_seed=0
 eval_linear_baseline=true
-eval_zero_action=true
+eval_zero_action=false
 save_model=true
 track=false
 wandb_project_name="BezierHomotopyUnivar-PPO"
@@ -124,7 +131,7 @@ wandb_entity=""
 # =============================================================================
 # Timezone used by ppo_continuous_action.py to generate run names.
 # Examples: Europe/Paris, Asia/Tokyo, UTC
-run_tz="${RUN_TZ:-Europe/Paris}"
+run_tz="${RUN_TZ:-Asia/Tokyo}"
 export RUN_TZ="$run_tz"
 
 # Julia threads for parallel path tracking (bezier_univar.jl, linear_univar.jl).
@@ -157,6 +164,8 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     $([ "$terminal_z0_bonus" = true ] && echo "--terminal-z0-bonus") \
     --terminal-z0-bonus-coef "$terminal_z0_bonus_coef" \
     --step-reward-scale "$step_reward_scale" \
+    --reward-mode "$reward_mode" \
+    --tracking-cost-mode "$tracking_cost_mode" \
     $([ "$require_z0_success" = true ] && echo "--require-z0-success") \
     --z0-max-tries "$z0_max_tries" \
     $([ "$hc_gamma_trick" = true ] && echo "--hc-gamma-trick") \
@@ -190,6 +199,10 @@ python3 scripts/bezier_hc_ppo/train_cleanrl_ppo.py \
     --num-minibatches "$num_minibatches" \
     --gamma "$gamma" \
     --gae-lambda "$gae_lambda" \
+    --ent-coef "$ent_coef" \
+    --reward-clip-abs "$reward_clip_abs" \
+    --use-reward-normalization "$use_reward_normalization" \
+    --actor-logstd-init "$actor_logstd_init" \
     --eval-interval "$eval_interval" \
     --eval-num-instances "$eval_num_instances" \
     --eval-seed "$eval_seed" \

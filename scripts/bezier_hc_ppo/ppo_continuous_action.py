@@ -103,6 +103,12 @@ class Args:
     """evaluate linear-path baseline on fixed validation set"""
     eval_zero_action: bool = False
     """evaluate Bezier tracker with action=0 on fixed validation set"""
+    use_reward_normalization: int = 1
+    """set 1 to enable NormalizeReward wrapper, 0 to disable"""
+    reward_clip_abs: float = 10.0
+    """clip reward to [-abs, abs]; <=0 disables reward clipping"""
+    actor_logstd_init: float = 0.0
+    """initial log standard deviation for the Gaussian policy"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -113,7 +119,15 @@ class Args:
     """the number of iterations (computed in runtime)"""
 
 
-def make_env(env_id, idx, capture_video, run_name, gamma):
+def make_env(
+    env_id,
+    idx,
+    capture_video,
+    run_name,
+    gamma,
+    use_reward_normalization,
+    reward_clip_abs,
+):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
@@ -126,8 +140,13 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
         env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeObservation(env)
         env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10), None)
-        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        if int(use_reward_normalization) != 0:
+            env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        if float(reward_clip_abs) > 0.0:
+            clip_abs = float(reward_clip_abs)
+            env = gym.wrappers.TransformReward(
+                env, lambda reward: np.clip(reward, -clip_abs, clip_abs)
+            )
         return env
 
     return thunk
@@ -140,7 +159,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, envs, actor_logstd_init: float = 0.0):
         super().__init__()
         self.critic = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
@@ -156,7 +175,12 @@ class Agent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(64, np.prod(envs.single_action_space.shape)), std=0.01),
         )
-        self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
+        self.actor_logstd = nn.Parameter(
+            torch.full(
+                (1, np.prod(envs.single_action_space.shape)),
+                float(actor_logstd_init),
+            )
+        )
 
     def get_value(self, x):
         return self.critic(x)
@@ -173,7 +197,12 @@ class Agent(nn.Module):
 
 def _mean_scalar(x):
     if isinstance(x, (list, tuple, np.ndarray)):
-        return float(np.mean(x))
+        vals = [float(v) for v in np.asarray(x, dtype=object).reshape(-1) if v is not None]
+        if not vals:
+            return float("nan")
+        return float(np.mean(vals))
+    if x is None:
+        return float("nan")
     return float(x)
 
 
@@ -242,7 +271,18 @@ if __name__ == "__main__":
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
+        [
+            make_env(
+                args.env_id,
+                i,
+                args.capture_video,
+                run_name,
+                args.gamma,
+                args.use_reward_normalization,
+                args.reward_clip_abs,
+            )
+            for i in range(args.num_envs)
+        ]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
@@ -254,10 +294,18 @@ if __name__ == "__main__":
     last_linear_metrics = None
     initial_eval_metrics = None
     if args.eval_interval > 0 and args.eval_num_instances > 0:
-        eval_env = make_env(args.env_id, 0, False, run_name, args.gamma)()
+        eval_env = make_env(
+            args.env_id,
+            0,
+            False,
+            run_name,
+            args.gamma,
+            args.use_reward_normalization,
+            args.reward_clip_abs,
+        )()
         eval_instances = build_fixed_eval_instances(eval_env, args.eval_num_instances, args.eval_seed)
 
-    agent = Agent(envs).to(device)
+    agent = Agent(envs, actor_logstd_init=args.actor_logstd_init).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -305,6 +353,18 @@ if __name__ == "__main__":
                 writer.add_scalar("env/success_mean", _mean_scalar(infos["success"]), global_step)
             if "tracking_cost" in infos:
                 writer.add_scalar("env/tracking_cost_mean", _mean_scalar(infos["tracking_cost"]), global_step)
+            if "proposal_tracking_cost" in infos:
+                writer.add_scalar(
+                    "env/proposal_tracking_cost_mean",
+                    _mean_scalar(infos["proposal_tracking_cost"]),
+                    global_step,
+                )
+            if "best_tracking_cost" in infos:
+                writer.add_scalar(
+                    "env/best_tracking_cost_mean",
+                    _mean_scalar(infos["best_tracking_cost"]),
+                    global_step,
+                )
             if "accepted_steps" in infos:
                 writer.add_scalar("env/accepted_steps_mean", _mean_scalar(infos["accepted_steps"]), global_step)
             if "rejected_steps" in infos:
@@ -337,6 +397,18 @@ if __name__ == "__main__":
                         writer.add_scalar("charts/success", float(info["success"]), global_step)
                     if "tracking_cost" in info:
                         writer.add_scalar("charts/tracking_cost", float(info["tracking_cost"]), global_step)
+                    if "proposal_tracking_cost" in info:
+                        writer.add_scalar(
+                            "charts/proposal_tracking_cost",
+                            float(info["proposal_tracking_cost"]),
+                            global_step,
+                        )
+                    if "best_tracking_cost" in info and info["best_tracking_cost"] is not None:
+                        writer.add_scalar(
+                            "charts/best_tracking_cost",
+                            float(info["best_tracking_cost"]),
+                            global_step,
+                        )
                     if "accepted_steps" in info:
                         writer.add_scalar("charts/accepted_steps", float(info["accepted_steps"]), global_step)
                     if "rejected_steps" in info:
@@ -441,6 +513,9 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        writer.add_scalar("policy/action_mean_abs", b_actions.abs().mean().item(), global_step)
+        writer.add_scalar("policy/action_mean_max_abs", b_actions.abs().amax().item(), global_step)
+        writer.add_scalar("policy/actor_logstd_mean", agent.actor_logstd.mean().item(), global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
         # Evaluate on fixed validation set right after this iteration's update (0 = disabled).
@@ -603,6 +678,8 @@ if __name__ == "__main__":
                 "terminal_z0_bonus": os.environ.get("BH_TERMINAL_Z0_BONUS", "0") == "1",
                 "terminal_z0_bonus_coef": float(os.environ.get("BH_TERMINAL_Z0_BONUS_COEF", "1.0")),
                 "step_reward_scale": float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
+                "reward_mode": os.environ.get("BH_REWARD_MODE", "delta"),
+                "tracking_cost_mode": os.environ.get("BH_TRACKING_COST_MODE", "steps"),
                 "require_z0_success": os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1",
                 "z0_max_tries": int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
                 "hc_gamma_trick": hc_gamma_trick,
@@ -643,6 +720,11 @@ if __name__ == "__main__":
                 "update_epochs": args.update_epochs,
                 "num_minibatches": args.num_minibatches,
                 "gae_lambda": args.gae_lambda,
+                "ent_coef": args.ent_coef,
+                "vf_coef": args.vf_coef,
+                "reward_clip_abs": args.reward_clip_abs,
+                "use_reward_normalization": args.use_reward_normalization,
+                "actor_logstd_init": args.actor_logstd_init,
             },
             "eval_logging": {
                 "eval_interval": args.eval_interval,

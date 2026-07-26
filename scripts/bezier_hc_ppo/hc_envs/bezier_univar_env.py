@@ -99,6 +99,8 @@ class BezierHomotopyUnivarEnv(gym.Env):
         terminal_z0_bonus: bool = False,
         terminal_z0_bonus_coef: float = 1.0,
         step_reward_scale: float = 1.0,
+        reward_mode: Literal["delta", "baseline", "terminal", "best"] = "delta",
+        tracking_cost_mode: Literal["steps", "eaj"] = "steps",
         require_z0_success: bool = False,
         z0_max_tries: int = 10,
         gamma_trick: bool = True,
@@ -144,6 +146,19 @@ class BezierHomotopyUnivarEnv(gym.Env):
         self.terminal_z0_bonus = bool(terminal_z0_bonus)
         self.terminal_z0_bonus_coef = float(terminal_z0_bonus_coef)
         self.step_reward_scale = float(step_reward_scale)
+        reward_mode = str(reward_mode).lower()
+        if reward_mode not in ("delta", "baseline", "terminal", "best"):
+            raise ValueError(
+                "reward_mode must be 'delta', 'baseline', 'terminal', or 'best', "
+                f"got: {reward_mode!r}"
+            )
+        self.reward_mode = reward_mode
+        mode = str(tracking_cost_mode).lower()
+        if mode not in ("steps", "eaj"):
+            raise ValueError(
+                f"tracking_cost_mode must be 'steps' or 'eaj', got: {tracking_cost_mode!r}"
+            )
+        self.tracking_cost_mode = mode
         self.require_z0_success = bool(require_z0_success)
         self.z0_max_tries = int(z0_max_tries)
         self.gamma_trick = bool(gamma_trick)
@@ -188,7 +203,8 @@ class BezierHomotopyUnivarEnv(gym.Env):
             hc_min_newton_iters=self.hc_min_newton_iters,
         )
         self.backend.ensure_ready(backend_cfg)
-        if self.terminal_linear_bonus:
+        self.needs_linear_baseline = self.terminal_linear_bonus or self.reward_mode == "best"
+        if self.needs_linear_baseline:
             linear_cfg = LinearUnivarConfig(
                 degree=self.degree,
                 seed=self.seed0,
@@ -213,6 +229,10 @@ class BezierHomotopyUnivarEnv(gym.Env):
         # Multi-step internal state
         self.z = np.zeros((self.bezier_degree - 1, self.latent_dim), dtype=np.float64)
         self.prev_tracking_cost: Optional[float] = None
+        self.current_tracking_cost: Optional[float] = None
+        self.best_tracking_cost: Optional[float] = None
+        self.best_z: Optional[np.ndarray] = None
+        self.best_tracking_info: Optional[dict] = None
         self.linear_tracking_cost: Optional[float] = None
         self.z0_tracking_cost: Optional[float] = None
         self.t = 0
@@ -227,7 +247,10 @@ class BezierHomotopyUnivarEnv(gym.Env):
         # Obs: problem features + progress features
         self.include_progress = bool(include_progress_features)
         base_obs_dim = (2 * self.num_coeffs) + (2 * self.num_coeffs) + 2
-        prog_obs_dim = (self.action_dim + 2) if self.include_progress else 0
+        if self.include_progress and self.reward_mode == "best":
+            prog_obs_dim = self.action_dim + 5
+        else:
+            prog_obs_dim = (self.action_dim + 2) if self.include_progress else 0
         obs_dim = base_obs_dim + prog_obs_dim
 
         self.observation_space = spaces.Box(
@@ -262,10 +285,10 @@ class BezierHomotopyUnivarEnv(gym.Env):
 
         target_coeffs = (re + 1j * im).astype(np.complex128)
 
-        # Start system: x^deg - 1
+        # Start system: x^deg - 1 (descending coeff order [a_deg, ..., a_0])
         start_coeffs = np.zeros(num_coeffs, dtype=np.complex128)
-        start_coeffs[0] = -1.0 + 0.0j
-        start_coeffs[deg] = 1.0 + 0.0j
+        start_coeffs[0] = 1.0 + 0.0j # coefficient of x^deg
+        start_coeffs[deg] = -1.0 + 0.0j # coefficient of x^0
 
         # Gamma: exp(i theta) when gamma_trick else 1
         if not self.gamma_trick:
@@ -383,14 +406,82 @@ class BezierHomotopyUnivarEnv(gym.Env):
         if self.include_progress:
             z_flat = self.z.reshape(-1)
             t_frac = 0.0 if self.episode_length <= 1 else (self.t / self.episode_length)
-            prev_cost = 0.0 if self.prev_tracking_cost is None else float(self.prev_tracking_cost)
             obs_parts.append(z_flat.astype(np.float64))
-            obs_parts.append(np.array([t_frac, prev_cost], dtype=np.float64))
+            if self.reward_mode == "best":
+                denom = self._baseline_denom()
+                current_cost = (
+                    self.current_tracking_cost
+                    if self.current_tracking_cost is not None
+                    else self.linear_tracking_cost
+                )
+                best_cost = (
+                    self.best_tracking_cost
+                    if self.best_tracking_cost is not None
+                    else self.linear_tracking_cost
+                )
+                current_ratio = 1.0 if current_cost is None else float(current_cost) / denom
+                best_ratio = 1.0 if best_cost is None else float(best_cost) / denom
+                gap_ratio = float(current_ratio - best_ratio)
+                norm_z_ratio = float(np.linalg.norm(self.z) / max(self.alpha_z, 1e-12))
+                obs_parts.append(
+                    np.array(
+                        [current_ratio, best_ratio, gap_ratio, t_frac, norm_z_ratio],
+                        dtype=np.float64,
+                    )
+                )
+            else:
+                prev_cost = 0.0 if self.prev_tracking_cost is None else float(self.prev_tracking_cost)
+                obs_parts.append(np.array([t_frac, prev_cost], dtype=np.float64))
 
         obs = np.concatenate(obs_parts, axis=0).astype(np.float32)
         return obs
 
-    def _compute_linear_tracking_cost(self) -> float:
+    def _tracking_metrics_from_out(self, out):
+        success = bool(out.success_flag)
+        acc = int(out.total_accepted_steps)
+        rej = int(out.total_rejected_steps)
+        attempts = int(out.total_step_attempts)
+        newton_iters = int(getattr(out, "total_newton_iterations", 0))
+        eaj_calls = int(getattr(out, "total_evaluate_and_jacobian_calls", 0))
+        return success, acc, rej, attempts, newton_iters, eaj_calls
+
+    def _compute_tracking_cost(
+        self,
+        success: bool,
+        accepted_steps: int,
+        rejected_steps: int,
+        evaluate_and_jacobian_calls: int,
+    ) -> float:
+        if not success:
+            return float(self.failure_penalty)
+        if self.tracking_cost_mode == "steps":
+            return float(accepted_steps + self.rho * rejected_steps)
+        return float(evaluate_and_jacobian_calls)
+
+    def _tracking_info_from_out(self, out) -> dict:
+        success, acc, rej, attempts, newton_iters, eaj_calls = self._tracking_metrics_from_out(
+            out
+        )
+        tracking_cost = self._compute_tracking_cost(success, acc, rej, eaj_calls)
+        return {
+            "success": success,
+            "tracking_cost": tracking_cost,
+            "accepted_steps": acc,
+            "rejected_steps": rej,
+            "total_step_attempts": attempts,
+            "total_newton_iterations": newton_iters,
+            "total_evaluate_and_jacobian_calls": eaj_calls,
+            "runtime_sec": float(getattr(out, "runtime_sec", 0.0)),
+            "tracking_time_sec": float(getattr(out, "tracking_time_sec", 0.0)),
+        }
+
+    def _baseline_denom(self) -> float:
+        baseline = self.linear_tracking_cost
+        if baseline is None or not np.isfinite(float(baseline)) or float(baseline) <= 0.0:
+            return max(float(self.failure_penalty), 1.0)
+        return max(float(baseline), 1e-12)
+
+    def _compute_linear_tracking_info(self) -> dict:
         assert self.inst is not None
         start_coeffs = self.inst.start_coeffs
         target_coeffs = self.inst.target_coeffs
@@ -402,12 +493,10 @@ class BezierHomotopyUnivarEnv(gym.Env):
             target_coeffs,
             compute_newton_iters=bool(self.compute_newton_iters),
         )
-        success = bool(out.success_flag)
-        acc = int(out.total_accepted_steps)
-        rej = int(out.total_rejected_steps)
-        if success:
-            return float(acc + self.rho * rej)
-        return float(self.failure_penalty)
+        return self._tracking_info_from_out(out)
+
+    def _compute_linear_tracking_cost(self) -> float:
+        return float(self._compute_linear_tracking_info()["tracking_cost"])
 
     def _compute_z0_tracking_cost(self) -> float:
         assert self.inst is not None
@@ -419,12 +508,8 @@ class BezierHomotopyUnivarEnv(gym.Env):
             ctrl,
             compute_newton_iters=bool(self.compute_newton_iters),
         )
-        success = bool(out.success_flag)
-        acc = int(out.total_accepted_steps)
-        rej = int(out.total_rejected_steps)
-        if success:
-            return float(acc + self.rho * rej)
-        return float(self.failure_penalty)
+        success, acc, rej, _, _, eaj_calls = self._tracking_metrics_from_out(out)
+        return self._compute_tracking_cost(success, acc, rej, eaj_calls)
 
     def set_fixed_instances(self, instances: Sequence[ProblemInstance], reset_idx: bool = True) -> None:
         """
@@ -452,12 +537,21 @@ class BezierHomotopyUnivarEnv(gym.Env):
             self.inst = self._sample_instance()
         self.z[...] = 0.0
         self.prev_tracking_cost = None
+        self.current_tracking_cost = None
+        self.best_tracking_cost = None
+        self.best_z = self.z.copy()
+        self.best_tracking_info = None
         self.linear_tracking_cost = None
         self.z0_tracking_cost = None
         self.t = 0
 
-        if self.terminal_linear_bonus:
-            self.linear_tracking_cost = self._compute_linear_tracking_cost()
+        if self.needs_linear_baseline:
+            linear_info = self._compute_linear_tracking_info()
+            self.linear_tracking_cost = float(linear_info["tracking_cost"])
+            if self.reward_mode == "best":
+                self.current_tracking_cost = self.linear_tracking_cost
+                self.best_tracking_cost = self.linear_tracking_cost
+                self.best_tracking_info = linear_info
         if self.terminal_z0_bonus:
             self.z0_tracking_cost = self._compute_z0_tracking_cost()
 
@@ -477,6 +571,7 @@ class BezierHomotopyUnivarEnv(gym.Env):
         # dz = dz * 0.1
 
         self.z = clip_rows_l2(self.z + dz, alpha=self.alpha_z)
+        proposed_z = self.z.copy()
 
         # Build ctrl and call Julia
         ctrl = self._build_control_points()
@@ -487,43 +582,89 @@ class BezierHomotopyUnivarEnv(gym.Env):
             compute_newton_iters=bool(self.compute_newton_iters),
         )
 
-        # juliacall returns a NamedTuple-like object with attribute access
-        success = bool(out.success_flag)
-        acc = int(out.total_accepted_steps)
-        rej = int(out.total_rejected_steps)
-        attempts = int(out.total_step_attempts)
-        newton_iters = int(getattr(out, "total_newton_iterations", 0))
+        proposal_info = self._tracking_info_from_out(out)
+        success = bool(proposal_info["success"])
+        tracking_cost = float(proposal_info["tracking_cost"])
 
-        # Tracking cost
-        if success:
-            tracking_cost = float(acc + self.rho * rej)
+        if self.reward_mode == "delta":
+            # Existing shaping: reward only reductions from the previous tried path.
+            if self.prev_tracking_cost is None:
+                reward = 0.0
+            else:
+                reward = float(self.prev_tracking_cost - tracking_cost) * self.step_reward_scale
+        elif self.reward_mode == "baseline":
+            baseline = (
+                self.linear_tracking_cost
+                if self.linear_tracking_cost is not None
+                else self.z0_tracking_cost
+            )
+            if baseline is None:
+                reward = -tracking_cost * self.step_reward_scale
+            else:
+                reward = float(baseline - tracking_cost) * self.step_reward_scale
+        elif self.reward_mode == "best":
+            prev_best = (
+                float(self.best_tracking_cost)
+                if self.best_tracking_cost is not None
+                else self._baseline_denom()
+            )
+            improved = tracking_cost < prev_best
+            if improved:
+                self.best_tracking_cost = tracking_cost
+                self.best_z = proposed_z.copy()
+                self.best_tracking_info = proposal_info
+            elif self.best_z is not None:
+                # Treat each action as a proposal around the accepted best path.
+                self.z = self.best_z.copy()
+            new_best = (
+                float(self.best_tracking_cost)
+                if self.best_tracking_cost is not None
+                else prev_best
+            )
+            reward = self.step_reward_scale * max(0.0, prev_best - new_best) / self._baseline_denom()
         else:
-            tracking_cost = float(self.failure_penalty)
-
-        # Differential reward (0 on the first step)
-        if self.prev_tracking_cost is None:
             reward = 0.0
-        else:
-            reward = float(self.prev_tracking_cost - tracking_cost) * self.step_reward_scale
         self.prev_tracking_cost = tracking_cost
+        self.current_tracking_cost = tracking_cost
 
         self.t += 1
         terminated = (self.t >= self.episode_length)
         truncated = False
 
-        if terminated and self.terminal_linear_bonus and self.linear_tracking_cost is not None:
-            reward += self.terminal_linear_bonus_coef * (
-                self.linear_tracking_cost - tracking_cost
-            )
-        if terminated and self.terminal_z0_bonus and self.z0_tracking_cost is not None:
-            reward += self.terminal_z0_bonus_coef * (
-                self.z0_tracking_cost - tracking_cost
-            )
+        if self.reward_mode == "best":
+            reported_info = self.best_tracking_info or proposal_info
+            reported_cost = float(reported_info["tracking_cost"])
+            if terminated and self.terminal_linear_bonus and self.linear_tracking_cost is not None:
+                reward += self.terminal_linear_bonus_coef * (
+                    self.linear_tracking_cost - reported_cost
+                ) / self._baseline_denom()
+            if terminated and self.terminal_z0_bonus and self.z0_tracking_cost is not None:
+                reward += self.terminal_z0_bonus_coef * (
+                    self.z0_tracking_cost - reported_cost
+                ) / self._baseline_denom()
+        else:
+            reported_info = proposal_info
+            reported_cost = tracking_cost
+            if terminated and self.terminal_linear_bonus and self.linear_tracking_cost is not None:
+                reward += self.terminal_linear_bonus_coef * (
+                    self.linear_tracking_cost - tracking_cost
+                )
+            if terminated and self.terminal_z0_bonus and self.z0_tracking_cost is not None:
+                reward += self.terminal_z0_bonus_coef * (
+                    self.z0_tracking_cost - tracking_cost
+                )
 
         obs = self._make_obs()
         info = {
-            "success": success,
-            "tracking_cost": tracking_cost,
+            "success": bool(reported_info["success"]),
+            "tracking_cost": reported_cost,
+            "proposal_success": success,
+            "proposal_tracking_cost": tracking_cost,
+            "best_tracking_cost": (
+                float(self.best_tracking_cost)
+                if self.best_tracking_cost is not None
+                else None
+            ),
             "linear_tracking_cost": (
                 float(self.linear_tracking_cost)
                 if self.linear_tracking_cost is not None
@@ -532,12 +673,17 @@ class BezierHomotopyUnivarEnv(gym.Env):
             "z0_tracking_cost": (
                 float(self.z0_tracking_cost) if self.z0_tracking_cost is not None else None
             ),
-            "accepted_steps": acc,
-            "rejected_steps": rej,
-            "total_step_attempts": attempts,
-            "total_newton_iterations": newton_iters,
-            "runtime_sec": float(out.runtime_sec),
-            "tracking_time_sec": float(out.tracking_time_sec),
+            "accepted_steps": int(reported_info["accepted_steps"]),
+            "rejected_steps": int(reported_info["rejected_steps"]),
+            "total_step_attempts": int(reported_info["total_step_attempts"]),
+            "total_newton_iterations": int(reported_info["total_newton_iterations"]),
+            "total_evaluate_and_jacobian_calls": int(
+                reported_info["total_evaluate_and_jacobian_calls"]
+            ),
+            "tracking_cost_mode": self.tracking_cost_mode,
+            "reward_mode": self.reward_mode,
+            "runtime_sec": float(reported_info["runtime_sec"]),
+            "tracking_time_sec": float(reported_info["tracking_time_sec"]),
             "norm_z": float(np.linalg.norm(self.z)),
         }
         return obs, reward, terminated, truncated, info

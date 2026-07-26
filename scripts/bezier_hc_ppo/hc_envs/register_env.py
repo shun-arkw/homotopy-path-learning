@@ -40,6 +40,8 @@ def _env_kwargs_from_envvars() -> dict:
         terminal_z0_bonus=(os.environ.get("BH_TERMINAL_Z0_BONUS", "0") == "1"),
         terminal_z0_bonus_coef=float(os.environ.get("BH_TERMINAL_Z0_BONUS_COEF", "1.0")),
         step_reward_scale=float(os.environ.get("BH_STEP_REWARD_SCALE", "1.0")),
+        reward_mode=os.environ.get("BH_REWARD_MODE", "delta"),
+        tracking_cost_mode=os.environ.get("BH_TRACKING_COST_MODE", "steps"),
         require_z0_success=(os.environ.get("BH_REQUIRE_Z0_SUCCESS", "0") == "1"),
         z0_max_tries=int(os.environ.get("BH_Z0_MAX_TRIES", "10")),
         gamma_trick=(os.environ.get("BH_GAMMA_TRICK", "1") == "1"),

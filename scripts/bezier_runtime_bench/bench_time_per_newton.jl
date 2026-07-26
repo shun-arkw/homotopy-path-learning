@@ -25,25 +25,25 @@ function main()
     target_coeffs = ctrl[end, :]
 
     # --- Linear ---
-    LINEAR_EVAL_COUNTS[] = Dict{String,Int}()
+    reset_linear_eval_counts!()
     LINEAR_ENABLE_EVAL_COUNTS[] = true
     total_time_lin = 0.0
     for _ in 1:n_runs
         out = track_linear_paths_univar(degree, start_coeffs, target_coeffs)
         total_time_lin += out.tracking_time_sec
     end
-    n_newton_lin = get(LINEAR_EVAL_COUNTS[], "evaluate_and_jacobian", 0)
+    n_newton_lin = get(linear_eval_counts_total(), "evaluate_and_jacobian", 0)
     LINEAR_ENABLE_EVAL_COUNTS[] = false
 
     # --- Bezier ---
-    EVAL_COUNTS[] = Dict{String,Int}()
+    reset_eval_counts!()
     ENABLE_EVAL_COUNTS[] = true
     total_time_bez = 0.0
     for _ in 1:n_runs
         out = track_bezier_paths_univar(degree, bezier_degree, ctrl)
         total_time_bez += out.tracking_time_sec
     end
-    n_newton_bez = get(EVAL_COUNTS[], "evaluate_and_jacobian", 0)
+    n_newton_bez = get(eval_counts_total(), "evaluate_and_jacobian", 0)
     ENABLE_EVAL_COUNTS[] = false
 
     # --- Report ---

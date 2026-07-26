@@ -1,19 +1,89 @@
+# Linear-in-τ univariate homotopy for PPO / juliacall (optimizations aligned with scripts/bezier_runtime_bench).
 using HomotopyContinuation
 using HomotopyContinuation.ModelKit
 using Random
 using Base.Threads
 
-# ============================================================
-# 0) Utilities
-# ============================================================
+# Optional: set to true to count calls (time-per-Newton bench).
+# Thread-safe counter storage via per-thread dictionaries.
+const LINEAR_ENABLE_EVAL_COUNTS = Ref(false)
+const LINEAR_EVAL_COUNTS_TLS = Ref(Vector{Dict{String,Int}}())
+const LINEAR_ENABLE_EVAL_TIMINGS = Ref(false)
+const LINEAR_EVAL_TIMINGS_TLS = Ref(Vector{Dict{String,Float64}}())
+
+function reset_linear_eval_counts!()
+    nt = Threads.nthreads()
+    LINEAR_EVAL_COUNTS_TLS[] = [Dict{String,Int}() for _ in 1:nt]
+    return nothing
+end
+
+function linear_eval_counts_total()
+    if isempty(LINEAR_EVAL_COUNTS_TLS[])
+        reset_linear_eval_counts!()
+    end
+    out = Dict{String,Int}()
+    for d in LINEAR_EVAL_COUNTS_TLS[]
+        for (k, v) in d
+            out[k] = get(out, k, 0) + v
+        end
+    end
+    return out
+end
+
+function reset_linear_eval_timings!()
+    nt = Threads.nthreads()
+    LINEAR_EVAL_TIMINGS_TLS[] = [Dict{String,Float64}() for _ in 1:nt]
+    return nothing
+end
+
+function linear_eval_timings_total()
+    if isempty(LINEAR_EVAL_TIMINGS_TLS[])
+        reset_linear_eval_timings!()
+    end
+    out = Dict{String,Float64}()
+    for d in LINEAR_EVAL_TIMINGS_TLS[]
+        for (k, v) in d
+            out[k] = get(out, k, 0.0) + v
+        end
+    end
+    return out
+end
+
+@inline function _inc_linear(name::String)
+    if !LINEAR_ENABLE_EVAL_COUNTS[]
+        return nothing
+    end
+    tls = LINEAR_EVAL_COUNTS_TLS[]
+    tid = Threads.threadid()
+    if isempty(tls) || tid > length(tls)
+        reset_linear_eval_counts!()
+        tls = LINEAR_EVAL_COUNTS_TLS[]
+    end
+    d = tls[tid]
+    d[name] = get(d, name, 0) + 1
+    return nothing
+end
+
+@inline function _add_time_linear(name::String, dt_sec::Float64)
+    if !LINEAR_ENABLE_EVAL_TIMINGS[]
+        return nothing
+    end
+    tls = LINEAR_EVAL_TIMINGS_TLS[]
+    tid = Threads.threadid()
+    if isempty(tls) || tid > length(tls)
+        reset_linear_eval_timings!()
+        tls = LINEAR_EVAL_TIMINGS_TLS[]
+    end
+    d = tls[tid]
+    d[name] = get(d, name, 0.0) + dt_sec
+    return nothing
+end
 
 # ============================================================
-# 1) Polynomial evaluation (generic numeric type)
-# coeffs: [a_n, a_{n-1}, ..., a_0] (descending)
+# 1) Polynomial evaluation
 # ============================================================
 
 @inline function poly_and_deriv_horner(coeffs::AbstractVector, x)
-    # returns (P(x), P'(x)) with one pass
     b = convert(typeof(x), coeffs[1])
     c = zero(x)
     @inbounds for i in 2:length(coeffs)
@@ -31,17 +101,28 @@ end
     return b
 end
 
+@inline function _taylor_x0(tx1)
+    if tx1 isa ComplexF64
+        return tx1
+    elseif tx1 isa Tuple
+        return tx1[1]
+    end
+    try
+        return tx1[0]
+    catch
+        return tx1[1]
+    end
+end
+
 # ============================================================
-# 2) Custom homotopy: univariate polynomial degree, coefficients linear in tau
+# 2) Custom homotopy: linear in tau
 # ============================================================
 
 struct LinearUnivarPoly <: AbstractHomotopy
-    degree::Int                # polynomial degree
-    # endpoints: row 1 = start coeffs, row 2 = target coeffs
-    endpoints::Matrix{ComplexF64}  # size (2, degree+1)
-    # effective coeff buffers (descending order)
+    degree::Int
+    endpoints::Matrix{ComplexF64}
     ceff0::Vector{ComplexF64}
-    ceff1::Vector{ComplexF64}  # d/dtau coefficients (constant)
+    ceff1::Vector{ComplexF64}
 end
 
 Base.size(::LinearUnivarPoly) = (1, 1)
@@ -72,15 +153,26 @@ function ModelKit.evaluate!(u, H::LinearUnivarPoly, x, t, p=nothing)
 end
 
 function ModelKit.evaluate_and_jacobian!(u, U, H::LinearUnivarPoly, x, t, p=nothing)
+    _inc_linear("evaluate_and_jacobian")
     τ = 1.0 - Float64(real(t))
-    eval_coeffs0!(H, τ)
-    (px, dpx) = poly_and_deriv_horner(H.ceff0, x[1])
-    u[1] = px
-    U[1,1] = dpx
+    if LINEAR_ENABLE_EVAL_TIMINGS[]
+        t0 = time_ns()
+        eval_coeffs0!(H, τ)
+        _add_time_linear("eaj_eval_coeffs0_sec", (time_ns() - t0) * 1e-9)
+        t1 = time_ns()
+        (px, dpx) = poly_and_deriv_horner(H.ceff0, x[1])
+        _add_time_linear("eaj_poly_and_deriv_sec", (time_ns() - t1) * 1e-9)
+        u[1] = px
+        U[1,1] = dpx
+    else
+        eval_coeffs0!(H, τ)
+        (px, dpx) = poly_and_deriv_horner(H.ceff0, x[1])
+        u[1] = px
+        U[1,1] = dpx
+    end
     return nothing
 end
 
-# d^k/dt^k H(x,t). We use tau=1-t => d/dt = -d/dtau
 function ModelKit.taylor!(u, ::Val{k}, H::LinearUnivarPoly, x::Vector{ComplexF64}, t) where {k}
     if k == 0
         τ = 1.0 - Float64(real(t))
@@ -88,14 +180,7 @@ function ModelKit.taylor!(u, ::Val{k}, H::LinearUnivarPoly, x::Vector{ComplexF64
         u[1] = poly_only_horner(H.ceff0, x[1])
         return u
     elseif k == 1
-        # d/dt = -d/dtau
-        @inbounds for i in 1:length(H.ceff1)
-            H.ceff1[i] = -H.ceff1[i]
-        end
-        u[1] = poly_only_horner(H.ceff1, x[1])
-        @inbounds for i in 1:length(H.ceff1)
-            H.ceff1[i] = -H.ceff1[i]
-        end
+        u[1] = -poly_only_horner(H.ceff1, x[1])
         return u
     else
         fill!(u, 0.0 + 0im); return u
@@ -106,18 +191,12 @@ function ModelKit.taylor!(u, ::Val{k}, H::LinearUnivarPoly, tx, t) where {k}
     if k == 0
         τ = 1.0 - Float64(real(t))
         eval_coeffs0!(H, τ)
-        xval = (tx[1] isa ComplexF64) ? tx[1] : tx[1][0]
+        xval = _taylor_x0(tx[1])
         u[1] = poly_only_horner(H.ceff0, xval)
         return u
     elseif k == 1
-        @inbounds for i in 1:length(H.ceff1)
-            H.ceff1[i] = -H.ceff1[i]
-        end
-        xval = (tx[1] isa ComplexF64) ? tx[1] : tx[1][0]
-        u[1] = poly_only_horner(H.ceff1, xval)
-        @inbounds for i in 1:length(H.ceff1)
-            H.ceff1[i] = -H.ceff1[i]
-        end
+        xval = _taylor_x0(tx[1])
+        u[1] = -poly_only_horner(H.ceff1, xval)
         return u
     else
         fill!(u, 0.0 + 0im); return u
@@ -125,7 +204,7 @@ function ModelKit.taylor!(u, ::Val{k}, H::LinearUnivarPoly, tx, t) where {k}
 end
 
 # ============================================================
-# 3) Starts for G(x)=x^n-1 (total-degree style, univariate)
+# 3) Starts
 # ============================================================
 
 function total_degree_start_solutions_univar(degree::Int)
@@ -137,7 +216,7 @@ function total_degree_start_solutions_univar(degree::Int)
 end
 
 # ============================================================
-# 4) State with per-thread cache (for parallel path tracking)
+# 4) State and thread cache
 # ============================================================
 
 mutable struct LinearUnivarState
@@ -146,7 +225,6 @@ mutable struct LinearUnivarState
     tracker0::Any
     opts::HomotopyContinuation.TrackerOptions
     starts::Vector{Vector{ComplexF64}}
-
     nthreads_cached::Int
     Hs::Vector{LinearUnivarPoly}
     trackers::Vector{Any}
@@ -160,9 +238,8 @@ function _build_thread_cache!(st::LinearUnivarState)
     st.Hs = Vector{LinearUnivarPoly}(undef, nt)
     st.trackers = Vector{Any}(undef, nt)
     @inbounds for tid in 1:nt
-        Hloc = deepcopy(st.H0)
-        st.Hs[tid] = Hloc
-        st.trackers[tid] = HomotopyContinuation.Tracker(Hloc; options=st.opts)
+        st.Hs[tid] = deepcopy(st.H0)
+        st.trackers[tid] = HomotopyContinuation.Tracker(st.Hs[tid]; options=st.opts)
     end
     return nothing
 end
@@ -175,7 +252,7 @@ function _ensure_thread_cache!(st::LinearUnivarState)
 end
 
 # ============================================================
-# 5) API for Python (juliacall)
+# 5) Init and track API
 # ============================================================
 
 function init_linear_univar(;
@@ -187,6 +264,8 @@ function init_linear_univar(;
     max_step_size::Float64 = 0.05,
     max_initial_step_size::Float64 = 0.05,
     min_step_size::Float64 = 1e-12,
+    # TrackerOptions (shared with bezier_univar.jl)
+    automatic_differentiation::Int = 1,
     # HC TrackerParameters (shared with bezier_univar.jl)
     hc_a::Float64 = 0.125,
     hc_beta_a::Float64 = 1.0,
@@ -198,7 +277,6 @@ function init_linear_univar(;
     Random.seed!(seed)
     ncoef = degree + 1
     endpoints = zeros(ComplexF64, 2, ncoef)
-    # Dummy warmup endpoints: start = x^degree - 1, target = small random
     endpoints[1, 1] = 1.0 + 0im
     for i in 2:ncoef-1
         endpoints[1, i] = 0.0 + 0im
@@ -218,15 +296,11 @@ function init_linear_univar(;
     starts = total_degree_start_solutions_univar(degree)
 
     p_custom = HomotopyContinuation.TrackerParameters(
-        hc_a,
-        hc_beta_a,
-        hc_beta_omega_p,
-        hc_beta_tau,
-        hc_strict_beta_tau,
-        hc_min_newton_iters,
+        hc_a, hc_beta_a, hc_beta_omega_p, hc_beta_tau, hc_strict_beta_tau, hc_min_newton_iters,
     )
 
     opts = HomotopyContinuation.TrackerOptions(
+        automatic_differentiation = automatic_differentiation,
         max_steps = max_steps,
         max_step_size = max_step_size,
         max_initial_step_size = max_initial_step_size,
@@ -236,137 +310,136 @@ function init_linear_univar(;
     )
 
     tracker0 = HomotopyContinuation.Tracker(H0; options=opts)
-
     st = LinearUnivarState(
-        degree,
-        H0,
-        tracker0,
-        opts,
-        starts,
-        0,
-        LinearUnivarPoly[],
-        Any[],
+        degree, H0, tracker0, opts, starts,
+        0, LinearUnivarPoly[], Any[],
     )
     _build_thread_cache!(st)
-
     __STATE_LINEAR__[degree] = st
     return nothing
 end
 
-function track_linear_paths_univar(degree::Int, start_coeffs::AbstractVector{<:Complex}, target_coeffs::AbstractVector{<:Complex}; compute_newton_iters::Bool=false)
+function track_linear_paths_univar(
+    degree::Int,
+    start_coeffs::AbstractVector{<:Complex},
+    target_coeffs::AbstractVector{<:Complex};
+    compute_newton_iters::Bool = false,
+)
     t0 = time()
     st = __STATE_LINEAR__[degree]
     @assert length(start_coeffs) == degree + 1
     @assert length(target_coeffs) == degree + 1
+    old_enable_eval_counts = LINEAR_ENABLE_EVAL_COUNTS[]
+    LINEAR_ENABLE_EVAL_COUNTS[] = true
+    reset_linear_eval_counts!()
 
-    if compute_newton_iters
-        # Sequential: safe with stdout/stderr capture for Newton iteration logging
-        H = st.H0
-        @inbounds for i in 1:(degree+1)
-            H.endpoints[1, i] = start_coeffs[i]
-            H.endpoints[2, i] = target_coeffs[i]
-        end
-        update_linear_diff!(H)
+    try
+        if compute_newton_iters
+            H = st.H0
+            @inbounds for i in 1:(degree + 1)
+                H.endpoints[1, i] = start_coeffs[i]
+                H.endpoints[2, i] = target_coeffs[i]
+            end
+            update_linear_diff!(H)
 
-        success_flag = true
-        total_step_attempts = 0
-        total_newton_iterations = 0
-        total_accepted_steps = 0
-        total_rejected_steps = 0
-        tracking_time_sec = 0.0
+            success_flag = true
+            total_step_attempts = 0
+            total_newton_iterations = 0
+            total_accepted_steps = 0
+            total_rejected_steps = 0
+            tracking_time_sec = 0.0
 
-        for s in st.starts
-            pipe = Pipe()
-            buf = IOBuffer()
-            reader = @async begin
-                while true
-                    chunk = read(pipe, 8192)
-                    isempty(chunk) && break
-                    write(buf, chunk)
+            for s in st.starts
+                pipe = Pipe()
+                Base.link_pipe!(pipe)
+                buf = IOBuffer()
+                reader = @async begin
+                    while true
+                        chunk = read(pipe.out, 8192)
+                        isempty(chunk) && break
+                        write(buf, chunk)
+                    end
                 end
-            end
-            track_start = time()
-            pr = redirect_stdout(pipe) do
-                redirect_stderr(pipe) do
-                    track(st.tracker0, s; debug=true)
+                track_start = time()
+                pr = redirect_stdout(pipe.in) do
+                    redirect_stderr(pipe.in) do
+                        track(st.tracker0, s; debug=true)
+                    end
                 end
-            end
-            tracking_time_sec += time() - track_start
-            close(pipe.in)
-            wait(reader)
-            log = String(take!(buf))
-            for mt in eachmatch(r"iters\s*→\s*(\d+)", log)
-                total_newton_iterations += parse(Int, mt.captures[1])
+                tracking_time_sec += time() - track_start
+                close(pipe.in)
+                wait(reader)
+                log = String(take!(buf))
+                for mt in eachmatch(r"iters\s*→\s*(\d+)", log)
+                    total_newton_iterations += parse(Int, mt.captures[1])
+                end
+
+                _accepted_steps = accepted_steps(pr)
+                _rejected_steps = rejected_steps(pr)
+                total_step_attempts += _accepted_steps + _rejected_steps
+                total_accepted_steps += _accepted_steps
+                total_rejected_steps += _rejected_steps
+                success_flag &= (pr.return_code == :success)
             end
 
-            _accepted_steps = accepted_steps(pr)
-            _rejected_steps = rejected_steps(pr)
-            total_step_attempts += _accepted_steps + _rejected_steps
-            total_accepted_steps += _accepted_steps
-            total_rejected_steps += _rejected_steps
-            success_flag &= (pr.return_code == :success)
+            counts = linear_eval_counts_total()
+            total_evaluate_and_jacobian_calls = get(counts, "evaluate_and_jacobian", 0)
+            runtime_sec = time() - t0
+            return (
+                success_flag = success_flag,
+                total_step_attempts = total_step_attempts,
+                total_newton_iterations = total_newton_iterations,
+                total_accepted_steps = total_accepted_steps,
+                total_rejected_steps = total_rejected_steps,
+                total_evaluate_and_jacobian_calls = total_evaluate_and_jacobian_calls,
+                runtime_sec = runtime_sec,
+                tracking_time_sec = tracking_time_sec,
+            )
         end
 
+        _ensure_thread_cache!(st)
+        nt = st.nthreads_cached
+        @inbounds for tid in 1:nt
+            Hloc = st.Hs[tid]
+            @inbounds for i in 1:(degree + 1)
+                Hloc.endpoints[1, i] = start_coeffs[i]
+                Hloc.endpoints[2, i] = target_coeffs[i]
+            end
+            update_linear_diff!(Hloc)
+        end
+
+        n = length(st.starts)
+        acc = zeros(Int, n)
+        rej = zeros(Int, n)
+        ok  = trues(n)
+        tsec = zeros(Float64, n)
+        Threads.@threads for i in 1:n
+            tid = Threads.threadid()
+            tr = st.trackers[tid]
+            s = st.starts[i]
+            tstart = time()
+            pr = track(tr, s; debug=false)
+            tsec[i] = time() - tstart
+            acc[i] = accepted_steps(pr)
+            rej[i] = rejected_steps(pr)
+            ok[i]  = (pr.return_code == :success)
+        end
+
+        counts = linear_eval_counts_total()
+        total_evaluate_and_jacobian_calls = get(counts, "evaluate_and_jacobian", 0)
+        tracking_time_sec = sum(tsec)
         runtime_sec = time() - t0
         return (
-            success_flag=success_flag,
-            total_step_attempts=total_step_attempts,
-            total_newton_iterations=total_newton_iterations,
-            total_accepted_steps=total_accepted_steps,
-            total_rejected_steps=total_rejected_steps,
-            runtime_sec=runtime_sec,
-            tracking_time_sec=tracking_time_sec,
+            success_flag = all(ok),
+            total_step_attempts = sum(acc) + sum(rej),
+            total_newton_iterations = 0,
+            total_accepted_steps = sum(acc),
+            total_rejected_steps = sum(rej),
+            total_evaluate_and_jacobian_calls = total_evaluate_and_jacobian_calls,
+            runtime_sec = runtime_sec,
+            tracking_time_sec = tracking_time_sec,
         )
+    finally
+        LINEAR_ENABLE_EVAL_COUNTS[] = old_enable_eval_counts
     end
-
-    # Parallel path tracking with cached per-thread trackers
-    _ensure_thread_cache!(st)
-    nt = st.nthreads_cached
-
-    # Copy endpoints into each thread's homotopy (sequential; cheap)
-    @inbounds for tid in 1:nt
-        Hloc = st.Hs[tid]
-        @inbounds for i in 1:(degree+1)
-            Hloc.endpoints[1, i] = start_coeffs[i]
-            Hloc.endpoints[2, i] = target_coeffs[i]
-        end
-        update_linear_diff!(Hloc)
-    end
-
-    n = length(st.starts)
-    acc = zeros(Int, n)
-    rej = zeros(Int, n)
-    ok  = trues(n)
-    tsec = zeros(Float64, n)
-
-    Threads.@threads for i in 1:n
-        tid = Threads.threadid()
-        tr = st.trackers[tid]
-        s = st.starts[i]
-
-        tstart = time()
-        pr = track(tr, s; debug=false)
-        tsec[i] = time() - tstart
-
-        acc[i] = accepted_steps(pr)
-        rej[i] = rejected_steps(pr)
-        ok[i]  = (pr.return_code == :success)
-    end
-
-    total_accepted_steps = sum(acc)
-    total_rejected_steps = sum(rej)
-    total_step_attempts  = total_accepted_steps + total_rejected_steps
-    success_flag         = all(ok)
-    tracking_time_sec    = sum(tsec)
-    runtime_sec          = time() - t0
-
-    return (
-        success_flag=success_flag,
-        total_step_attempts=total_step_attempts,
-        total_newton_iterations=0,
-        total_accepted_steps=total_accepted_steps,
-        total_rejected_steps=total_rejected_steps,
-        runtime_sec=runtime_sec,
-        tracking_time_sec=tracking_time_sec,
-    )
 end

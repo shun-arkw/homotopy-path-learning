@@ -3,8 +3,8 @@
 # EVAL SAVED PPO MODEL (BEZIER VS LINEAR SINGLE-GAMMA)
 # =============================================================================
 # Runs scripts/bezier_hc_ppo/eval_saved_model.py with configurable arguments.
-# The evaluator automatically loads config.json from the model directory, so
-# training/evaluation environment settings stay consistent.
+# Requires config.json next to the model (including env.tracking_cost_mode).
+# The evaluator loads it so training/evaluation settings stay consistent.
 #
 # Usage:
 #   bash sh/eval_model.sh
@@ -18,8 +18,8 @@ set -euo pipefail
 # 1. CONFIGURATION (edit these)
 # =============================================================================
 # Experiment setting (must match the run you want to evaluate; same as run_ppo.sh)
-degree=20
-bezier_degree=4
+degree=40
+bezier_degree=3
 episode_len=1
 
 # HC tracking params (must match the run you want to evaluate; same as run_ppo.sh)
@@ -28,8 +28,8 @@ hc_beta_tau=0.85
 hc_strict_beta_tau=0.8
 
 # Run subdir: run_YYYYMMDD_HHMMSS (same format as run_ppo.sh output)
-run_date="20260212"
-run_time="205924"
+run_date="20260409"
+run_time="170630"
 
 # Base dir for results (match run_ppo.sh result_root and hc_tracking_tag)
 result_root="results/bezier_ppo/univar"
@@ -47,6 +47,8 @@ device="cpu"
 compute_newton_iters=true # false
 # Leave empty to save to <run_dir>/eval_results.json
 save_results=""
+# Leave empty to save to <run_dir>/eval_per_instance.jsonl.gz
+save_per_instance_jsonl_gz=""
 
 # =============================================================================
 # 2. RESOLVE PATHS
@@ -69,15 +71,17 @@ if [[ ! -f "$model_path" ]]; then
 fi
 
 config_path="$run_dir/config.json"
-if [[ -f "$config_path" ]]; then
-    echo "Using run config: $config_path"
-else
-    echo "Warning: config.json not found in run directory."
-    echo "Evaluation will fall back to eval_saved_model.py defaults/CLI options."
+if [[ ! -f "$config_path" ]]; then
+    echo "Error: config.json required next to model: $config_path"
+    exit 1
 fi
+echo "Using run config: $config_path"
 
 if [[ -z "$save_results" ]]; then
     save_results="$run_dir/eval_results.json"
+fi
+if [[ -z "$save_per_instance_jsonl_gz" ]]; then
+    save_per_instance_jsonl_gz="$run_dir/eval_per_instance.jsonl.gz"
 fi
 
 # =============================================================================
@@ -91,4 +95,5 @@ python3 scripts/bezier_hc_ppo/eval_saved_model.py \
     --worst-k "$worst_k" \
     --device "$device" \
     --compute-newton-iters "$compute_newton_iters" \
-    --save-results "$save_results"
+    --save-results "$save_results" \
+    --save-per-instance-jsonl-gz "$save_per_instance_jsonl_gz"

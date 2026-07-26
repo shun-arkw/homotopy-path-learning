@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import torch
 
-from .coeffs import full_coeffs_ascending_to_descending_ri
 from .complex_repr import complex_norm_ri
 from .config import ConditionLengthConfig
 from .discriminant_calculator import discriminant_univariate_logabs
@@ -21,7 +20,7 @@ def calculate_linear_condition_length_numeric(
 ) -> torch.Tensor:
     """Condition length for a straight line between two coefficient vectors (full coeffs).
 
-    P_ri: shape (2, degree+1, 2) in (Re, Im), ascending power [a_0,...,a_degree] per row.
+    P_ri: shape (2, degree+1, 2) in (Re, Im), descending power [a_degree,...,a_0] per row.
     Supports non-monic polynomials.
     """
     if loss_cfg is None:
@@ -40,8 +39,7 @@ def calculate_linear_condition_length_numeric(
     seg_len = complex_norm_ri(P_ri[1] - P_ri[0])
     ts = make_uniform_ts(M, device=device, dtype=dtype)
     t = ts.view(M, 1, 1)
-    gamma = (1.0 - t) * P_ri[0:1] + t * P_ri[1:2]  # (M, degree+1, 2) ascending
-    a_ri = full_coeffs_ascending_to_descending_ri(gamma)  # (M, degree+1, 2)
+    a_ri = (1.0 - t) * P_ri[0:1] + t * P_ri[1:2]  # (M, degree+1, 2) descending
 
     disc_logabs = discriminant_univariate_logabs(
         a_ri,

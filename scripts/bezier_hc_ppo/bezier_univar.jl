@@ -1,7 +1,83 @@
+# Bézier univariate homotopy for PPO / juliacall (optimizations aligned with scripts/bezier_runtime_bench).
 using HomotopyContinuation
 using HomotopyContinuation.ModelKit
 using Random
 using Base.Threads
+
+# Optional: set to true to count homotopy eval calls (bottleneck check).
+# Thread-safe counter storage via per-thread dictionaries.
+const ENABLE_EVAL_COUNTS = Ref(false)
+const EVAL_COUNTS_TLS = Ref(Vector{Dict{String,Int}}())
+const ENABLE_EVAL_TIMINGS = Ref(false)
+const EVAL_TIMINGS_TLS = Ref(Vector{Dict{String,Float64}}())
+
+function reset_eval_counts!()
+    nt = Threads.nthreads()
+    EVAL_COUNTS_TLS[] = [Dict{String,Int}() for _ in 1:nt]
+    return nothing
+end
+
+function eval_counts_total()
+    if isempty(EVAL_COUNTS_TLS[])
+        reset_eval_counts!()
+    end
+    out = Dict{String,Int}()
+    for d in EVAL_COUNTS_TLS[]
+        for (k, v) in d
+            out[k] = get(out, k, 0) + v
+        end
+    end
+    return out
+end
+
+function reset_eval_timings!()
+    nt = Threads.nthreads()
+    EVAL_TIMINGS_TLS[] = [Dict{String,Float64}() for _ in 1:nt]
+    return nothing
+end
+
+function eval_timings_total()
+    if isempty(EVAL_TIMINGS_TLS[])
+        reset_eval_timings!()
+    end
+    out = Dict{String,Float64}()
+    for d in EVAL_TIMINGS_TLS[]
+        for (k, v) in d
+            out[k] = get(out, k, 0.0) + v
+        end
+    end
+    return out
+end
+
+@inline function _inc(name::String)
+    if !ENABLE_EVAL_COUNTS[]
+        return nothing
+    end
+    tls = EVAL_COUNTS_TLS[]
+    tid = Threads.threadid()
+    if isempty(tls) || tid > length(tls)
+        reset_eval_counts!()
+        tls = EVAL_COUNTS_TLS[]
+    end
+    d = tls[tid]
+    d[name] = get(d, name, 0) + 1
+    return nothing
+end
+
+@inline function _add_time(name::String, dt_sec::Float64)
+    if !ENABLE_EVAL_TIMINGS[]
+        return nothing
+    end
+    tls = EVAL_TIMINGS_TLS[]
+    tid = Threads.threadid()
+    if isempty(tls) || tid > length(tls)
+        reset_eval_timings!()
+        tls = EVAL_TIMINGS_TLS[]
+    end
+    d = tls[tid]
+    d[name] = get(d, name, 0.0) + dt_sec
+    return nothing
+end
 
 # ============================================================
 # 0) Utilities
@@ -36,8 +112,6 @@ end
 
 # ============================================================
 # 2) Forward differences for control points
-# ctrl: (bezier_degree+1, ncoef), row j = j-th control point's coeff vector [a_n..a_0]
-# diffs[k]: (bezier_degree+1-k, ncoef)
 # ============================================================
 
 function compute_diffs!(diffs::Vector{Matrix{ComplexF64}},
@@ -70,12 +144,10 @@ function compute_diffs!(diffs::Vector{Matrix{ComplexF64}},
 end
 
 # ============================================================
-# 3) Polynomial evaluation (generic numeric type)
-# coeffs: [a_n, a_{n-1}, ..., a_0] (descending)
+# 3) Polynomial evaluation
 # ============================================================
 
 @inline function poly_and_deriv_horner(coeffs::AbstractVector, x)
-    # returns (P(x), P'(x)) with one pass
     b = convert(typeof(x), coeffs[1])
     c = zero(x)
     @inbounds for i in 2:length(coeffs)
@@ -93,26 +165,33 @@ end
     return b
 end
 
+@inline function _taylor_x0(tx1)
+    if tx1 isa ComplexF64
+        return tx1
+    elseif tx1 isa Tuple
+        return tx1[1]
+    end
+    try
+        return tx1[0]
+    catch
+        return tx1[1]
+    end
+end
+
 # ============================================================
-# 4) Custom homotopy: univariate polynomial degree, coefficients Bezier in tau
+# 4) Custom homotopy: Bezier in tau
 # ============================================================
 
 struct BezierUnivarPoly <: AbstractHomotopy
-    degree::Int                # polynomial degree
-    bezier_degree::Int         # Bezier degree (control points bezier_degree+1)
-    max_derivative_order::Int                  # derivatives w.r.t t supported (<=4, <=bezier_degree)
-
-    # control coefficients: ctrl[j, :] = j-th control point's coeff vector [a_n..a_0]
-    # ctrl has size (bezier_degree+1, degree+1)
+    degree::Int
+    bezier_degree::Int
+    max_derivative_order::Int
+    fallfac_k::Vector{Float64}
+    last_tau::Base.RefValue{Float64}
+    last_tau_valid::Base.RefValue{Bool}
     ctrl::Matrix{ComplexF64}
-
-    # forward differences: diffs[k] has size (bezier_degree+1-k, degree+1)
     diffs::Vector{Matrix{ComplexF64}}
-
-    # weight buffers for degrees bezier_degree, bezier_degree-1, ..., bezier_degree-max_derivative_order
     wbufs::Vector{Vector{Float64}}
-
-    # effective coeff buffers (descending order)
     ceff0::Vector{ComplexF64}
     ceff1::Vector{ComplexF64}
     ceff2::Vector{ComplexF64}
@@ -124,8 +203,44 @@ Base.size(::BezierUnivarPoly) = (1, 1)
 ModelKit.variables(::BezierUnivarPoly) = [Variable(:x)]
 ModelKit.parameters(::BezierUnivarPoly) = Variable[]
 
-# ---------- db=2,3,4,5 dedicated (closed-form Bernstein, no de Casteljau) ----------
-function _eval_coeffs0!_db2!(H::BezierUnivarPoly, τ::Float64)
+function eval_coeffs0!(H::BezierUnivarPoly, τ::Float64)
+    _inc("eval_coeffs0")
+    if H.last_tau_valid[] && τ == H.last_tau[]
+        _inc("eval_coeffs0_cache_hit")
+        return H.ceff0
+    end
+    _inc("eval_coeffs0_cache_miss")
+    db = H.bezier_degree
+    if db == 2
+        return eval_coeffs0!_db2!(H, τ)
+    elseif db == 3
+        return eval_coeffs0!_db3!(H, τ)
+    elseif db == 4
+        return eval_coeffs0!_db4!(H, τ)
+    elseif db == 5
+        return eval_coeffs0!_db5!(H, τ)
+    end
+    # generic: de Casteljau
+    w = H.wbufs[1]
+    bernstein_weights_casteljau!(w, τ)
+    out = H.ceff0
+    ncoef = length(out)
+    @inbounds @simd for i in 1:ncoef
+        s = 0.0 + 0im
+        for j in 1:(H.bezier_degree+1)
+            s += w[j] * H.ctrl[j, i]
+        end
+        out[i] = s
+    end
+    H.last_tau[] = τ
+    H.last_tau_valid[] = true
+    return out
+end
+
+# ---------- db-specific eval_coeffs0! (closed-form Bernstein, for profile_eval) ----------
+# H.ctrl must have at least (db+1) rows; writes H.ceff0.
+
+function eval_coeffs0!_db2!(H::BezierUnivarPoly, τ::Float64)
     u = 1.0 - τ
     u2 = u * u
     s2 = τ * τ
@@ -135,13 +250,15 @@ function _eval_coeffs0!_db2!(H::BezierUnivarPoly, τ::Float64)
     ncoef = H.degree + 1
     c = H.ctrl
     out = H.ceff0
-    @inbounds for i in 1:ncoef
+    @inbounds @simd for i in 1:ncoef
         out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i]
     end
+    H.last_tau[] = τ
+    H.last_tau_valid[] = true
     return out
 end
 
-function _eval_coeffs0!_db3!(H::BezierUnivarPoly, τ::Float64)
+function eval_coeffs0!_db3!(H::BezierUnivarPoly, τ::Float64)
     u = 1.0 - τ
     u2 = u * u
     u3 = u2 * u
@@ -151,16 +268,22 @@ function _eval_coeffs0!_db3!(H::BezierUnivarPoly, τ::Float64)
     w1 = 3.0 * u2 * τ
     w2 = 3.0 * u * s2
     w3 = s3
-    ncoef = H.degree + 1
-    c = H.ctrl
     out = H.ceff0
-    @inbounds for i in 1:ncoef
-        out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i] + w3 * c[4, i]
+    ncoef = length(out)
+    c = H.ctrl
+    @inbounds @simd for i in 1:ncoef
+        c1 = c[1, i]
+        c2 = c[2, i]
+        c3 = c[3, i]
+        c4 = c[4, i]
+        out[i] = w0 * c1 + w1 * c2 + w2 * c3 + w3 * c4
     end
+    H.last_tau[] = τ
+    H.last_tau_valid[] = true
     return out
 end
 
-function _eval_coeffs0!_db4!(H::BezierUnivarPoly, τ::Float64)
+function eval_coeffs0!_db4!(H::BezierUnivarPoly, τ::Float64)
     u = 1.0 - τ
     u2 = u * u
     u3 = u2 * u
@@ -176,13 +299,15 @@ function _eval_coeffs0!_db4!(H::BezierUnivarPoly, τ::Float64)
     ncoef = H.degree + 1
     c = H.ctrl
     out = H.ceff0
-    @inbounds for i in 1:ncoef
+    @inbounds @simd for i in 1:ncoef
         out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i] + w3 * c[4, i] + w4 * c[5, i]
     end
+    H.last_tau[] = τ
+    H.last_tau_valid[] = true
     return out
 end
 
-function _eval_coeffs0!_db5!(H::BezierUnivarPoly, τ::Float64)
+function eval_coeffs0!_db5!(H::BezierUnivarPoly, τ::Float64)
     u = 1.0 - τ
     u2 = u * u
     u3 = u2 * u
@@ -201,35 +326,12 @@ function _eval_coeffs0!_db5!(H::BezierUnivarPoly, τ::Float64)
     ncoef = H.degree + 1
     c = H.ctrl
     out = H.ceff0
-    @inbounds for i in 1:ncoef
+    @inbounds @simd for i in 1:ncoef
         out[i] = w0 * c[1, i] + w1 * c[2, i] + w2 * c[3, i] + w3 * c[4, i] + w4 * c[5, i] + w5 * c[6, i]
     end
+    H.last_tau[] = τ
+    H.last_tau_valid[] = true
     return out
-end
-
-function eval_coeffs0!(H::BezierUnivarPoly, τ::Float64)
-    db = H.bezier_degree
-    if db == 2
-        return _eval_coeffs0!_db2!(H, τ)
-    elseif db == 3
-        return _eval_coeffs0!_db3!(H, τ)
-    elseif db == 4
-        return _eval_coeffs0!_db4!(H, τ)
-    elseif db == 5
-        return _eval_coeffs0!_db5!(H, τ)
-    end
-    # generic: de Casteljau
-    w = H.wbufs[1]
-    bernstein_weights_casteljau!(w, τ)
-    ncoef = H.degree + 1
-    @inbounds for i in 1:ncoef
-        s = 0.0 + 0im
-        for j in 1:(H.bezier_degree+1)
-            s += w[j] * H.ctrl[j, i]
-        end
-        H.ceff0[i] = s
-    end
-    return H.ceff0
 end
 
 # Closed-form Bernstein weights for degree 1..4 (for eval_coeffs_k! when db=2..5)
@@ -277,19 +379,20 @@ end
 end
 
 function eval_coeffs_k!(out::Vector{ComplexF64}, H::BezierUnivarPoly, τ::Float64, k::Int)
-    fill!(out, 0.0 + 0im)
+    _inc("eval_coeffs_k")
     if k == 0
         eval_coeffs0!(H, τ)
         out .= H.ceff0
         return out
     end
     if k > H.bezier_degree
+        fill!(out, 0.0 + 0im)
         return out
     end
     deg = H.bezier_degree - k
-    w = H.wbufs[k+1]                  # length deg+1
-    Dk = H.diffs[k]                   # (deg+1, degree+1)
-    fac = fallfac(H.bezier_degree, k)
+    w = H.wbufs[k+1]
+    Dk = H.diffs[k]
+    fac = H.fallfac_k[k+1]
     ncoef = H.degree + 1
 
     # Use closed-form weights when db=2..5 and deg=1..4
@@ -308,7 +411,22 @@ function eval_coeffs_k!(out::Vector{ComplexF64}, H::BezierUnivarPoly, τ::Float6
         bernstein_weights_casteljau!(w, τ)
     end
 
-    @inbounds for i in 1:ncoef
+    # Hot path in this benchmark setup: db=3, k=1 => deg=2.
+    # Unroll to remove the inner j-loop overhead in taylor!(k=1).
+    if H.bezier_degree == 3 && k == 1
+        f1 = fac * w[1]
+        f2 = fac * w[2]
+        f3 = fac * w[3]
+        @views d1 = Dk[1, :]
+        @views d2 = Dk[2, :]
+        @views d3 = Dk[3, :]
+        @inbounds @simd for i in 1:ncoef
+            out[i] = f1 * d1[i] + f2 * d2[i] + f3 * d3[i]
+        end
+        return out
+    end
+
+    @inbounds @simd for i in 1:ncoef
         s = 0.0 + 0im
         for j in 1:(deg+1)
             s += w[j] * Dk[j, i]
@@ -321,39 +439,48 @@ end
 function ModelKit.evaluate!(u, H::BezierUnivarPoly, x, t, p=nothing)
     τ = 1.0 - Float64(real(t))
     eval_coeffs0!(H, τ)
+    _inc("poly_only_horner")
     u[1] = poly_only_horner(H.ceff0, x[1])
     return nothing
 end
 
 function ModelKit.evaluate_and_jacobian!(u, U, H::BezierUnivarPoly, x, t, p=nothing)
+    _inc("evaluate_and_jacobian")
     τ = 1.0 - Float64(real(t))
-    eval_coeffs0!(H, τ)
-    (px, dpx) = poly_and_deriv_horner(H.ceff0, x[1])
-    u[1] = px
-    U[1,1] = dpx
+    if ENABLE_EVAL_TIMINGS[]
+        t0 = time_ns()
+        eval_coeffs0!(H, τ)
+        _add_time("eaj_eval_coeffs0_sec", (time_ns() - t0) * 1e-9)
+    else
+        eval_coeffs0!(H, τ)
+    end
+    _inc("poly_and_deriv_horner")
+    if ENABLE_EVAL_TIMINGS[]
+        t1 = time_ns()
+        (px, dpx) = poly_and_deriv_horner(H.ceff0, x[1])
+        _add_time("eaj_poly_and_deriv_sec", (time_ns() - t1) * 1e-9)
+        u[1] = px
+        U[1,1] = dpx
+    else
+        (px, dpx) = poly_and_deriv_horner(H.ceff0, x[1])
+        u[1] = px
+        U[1,1] = dpx
+    end
     return nothing
 end
 
-# d^k/dt^k H(x,t) (k<=max_derivative_order). We use tau=1-t => d/dt = -d/dtau
 function ModelKit.taylor!(u, ::Val{k}, H::BezierUnivarPoly, x::Vector{ComplexF64}, t) where {k}
     if k > H.max_derivative_order
         fill!(u, 0.0 + 0im); return u
     end
     τ = 1.0 - Float64(real(t))
-    buf = k == 1 ? H.ceff1 :
-          k == 2 ? H.ceff2 :
-          k == 3 ? H.ceff3 :
-          k == 4 ? H.ceff4 : nothing
+    buf = k == 1 ? H.ceff1 : k == 2 ? H.ceff2 : k == 3 ? H.ceff3 : k == 4 ? H.ceff4 : nothing
     if buf === nothing
         fill!(u, 0.0 + 0im); return u
     end
     eval_coeffs_k!(buf, H, τ, k)
-    if isodd(k)
-        @inbounds for i in 1:length(buf)
-            buf[i] = -buf[i]
-        end
-    end
-    u[1] = poly_only_horner(buf, x[1])
+    y = poly_only_horner(buf, x[1])
+    u[1] = isodd(k) ? -y : y
     return u
 end
 
@@ -362,26 +489,19 @@ function ModelKit.taylor!(u, ::Val{k}, H::BezierUnivarPoly, tx, t) where {k}
         fill!(u, 0.0 + 0im); return u
     end
     τ = 1.0 - Float64(real(t))
-    buf = k == 1 ? H.ceff1 :
-          k == 2 ? H.ceff2 :
-          k == 3 ? H.ceff3 :
-          k == 4 ? H.ceff4 : nothing
+    buf = k == 1 ? H.ceff1 : k == 2 ? H.ceff2 : k == 3 ? H.ceff3 : k == 4 ? H.ceff4 : nothing
     if buf === nothing
         fill!(u, 0.0 + 0im); return u
     end
     eval_coeffs_k!(buf, H, τ, k)
-    if isodd(k)
-        @inbounds for i in 1:length(buf)
-            buf[i] = -buf[i]
-        end
-    end
-    xval = (tx[1] isa ComplexF64) ? tx[1] : tx[1][0]
-    u[1] = poly_only_horner(buf, xval)
+    xval = _taylor_x0(tx[1])
+    y = poly_only_horner(buf, xval)
+    u[1] = isodd(k) ? -y : y
     return u
 end
 
 # ============================================================
-# 5) Starts for G(x)=x^n-1 (total-degree style, univariate)
+# 5) Starts
 # ============================================================
 
 function total_degree_start_solutions_univar(degree::Int)
@@ -393,76 +513,63 @@ function total_degree_start_solutions_univar(degree::Int)
 end
 
 # ============================================================
-# 6) Default control points builder (for benchmark)
-# G fixed: x^n - 1
-# F random: leading coefficient not necessarily 1
+# 6) Control points builder
 # ============================================================
 
 function build_ctrl_univar(degree::Int, bezier_degree::Int; seed::Int=0, sigma_mid::Float64=0.2, sigma_F::Float64=0.3)
     Random.seed!(seed)
     ncoef = degree + 1
     ctrl = zeros(ComplexF64, bezier_degree+1, ncoef)
-
-    # --- G endpoint: row 1 = control point 1 (x^degree - 1) ---
-    ctrl[1, 1] = 1.0 + 0im        # a_n
+    ctrl[1, 1] = 1.0 + 0im
     for i in 2:ncoef-1
         ctrl[1, i] = 0.0 + 0im
     end
-    ctrl[1, ncoef] = -1.0 + 0im   # a_0
-
-    # --- F endpoint: row bezier_degree+1 = control point bezier_degree+1 (random coeffs) ---
+    ctrl[1, ncoef] = -1.0 + 0im
     for i in 1:ncoef
         ctrl[bezier_degree+1, i] = sigma_F * (randn() + randn()*im)
     end
     if abs(ctrl[bezier_degree+1, 1]) < 1e-3
         ctrl[bezier_degree+1, 1] += 1.0 + 0im
     end
-
-    # --- intermediate control points: rows 2..bezier_degree ---
     for j in 2:bezier_degree
         for i in 1:ncoef
             ctrl[j, i] = sigma_mid * (randn() + randn()*im)
         end
         ctrl[j, 1] += 1.0 + 0im
     end
-
     return ctrl
 end
 
 function make_homotopy_univar(degree::Int, bezier_degree::Int; seed::Int=0)
-    @assert degree >= 1
-    @assert bezier_degree >= 1
+    @assert degree >= 1 && bezier_degree >= 1
     ncoef = degree + 1
     max_derivative_order = min(4, bezier_degree)
-
     ctrl = build_ctrl_univar(degree, bezier_degree; seed=seed)
-
+    fallfac_k = zeros(Float64, max_derivative_order + 1)
+    fallfac_k[1] = 1.0
+    for k in 1:max_derivative_order
+        fallfac_k[k+1] = fallfac(bezier_degree, k)
+    end
     diffs = Vector{Matrix{ComplexF64}}(undef, max_derivative_order)
     for k in 1:max_derivative_order
         diffs[k] = zeros(ComplexF64, (bezier_degree+1-k), ncoef)
     end
     compute_diffs!(diffs, ctrl, bezier_degree, max_derivative_order)
-
     wbufs = Vector{Vector{Float64}}(undef, max_derivative_order + 1)
     for kk in 0:max_derivative_order
-        deg = bezier_degree - kk
-        wbufs[kk+1] = zeros(Float64, deg + 1)
+        wbufs[kk+1] = zeros(Float64, (bezier_degree - kk) + 1)
     end
-
     H = BezierUnivarPoly(
-        degree, bezier_degree, max_derivative_order,
+        degree, bezier_degree, max_derivative_order, fallfac_k, Ref(NaN), Ref(false),
         ctrl, diffs, wbufs,
-        zeros(ComplexF64, ncoef),
-        zeros(ComplexF64, ncoef),
-        zeros(ComplexF64, ncoef),
-        zeros(ComplexF64, ncoef),
-        zeros(ComplexF64, ncoef),
+        zeros(ComplexF64, ncoef), zeros(ComplexF64, ncoef), zeros(ComplexF64, ncoef),
+        zeros(ComplexF64, ncoef), zeros(ComplexF64, ncoef),
     )
     return H
 end
 
 # ============================================================
-# 7) State with per-thread cache (for parallel path tracking)
+# 7) State and thread cache
 # ============================================================
 
 mutable struct BezierUnivarState
@@ -472,7 +579,6 @@ mutable struct BezierUnivarState
     tracker0::Any
     opts::HomotopyContinuation.TrackerOptions
     starts::Vector{Vector{ComplexF64}}
-
     nthreads_cached::Int
     Hs::Vector{BezierUnivarPoly}
     trackers::Vector{Any}
@@ -486,9 +592,8 @@ function _build_thread_cache!(st::BezierUnivarState)
     st.Hs = Vector{BezierUnivarPoly}(undef, nt)
     st.trackers = Vector{Any}(undef, nt)
     @inbounds for tid in 1:nt
-        Hloc = deepcopy(st.H0)
-        st.Hs[tid] = Hloc
-        st.trackers[tid] = HomotopyContinuation.Tracker(Hloc; options=st.opts)
+        st.Hs[tid] = deepcopy(st.H0)
+        st.trackers[tid] = HomotopyContinuation.Tracker(st.Hs[tid]; options=st.opts)
     end
     return nothing
 end
@@ -501,7 +606,7 @@ function _ensure_thread_cache!(st::BezierUnivarState)
 end
 
 # ============================================================
-# 8) API for Python (juliacall)
+# 8) Init and track API
 # ============================================================
 
 function init_bezier_univar(;
@@ -514,6 +619,8 @@ function init_bezier_univar(;
     max_step_size::Float64 = 0.05,
     max_initial_step_size::Float64 = 0.05,
     min_step_size::Float64 = 1e-12,
+    # TrackerOptions (shared with linear_univar.jl)
+    automatic_differentiation::Int = 1,
     # HC TrackerParameters (shared with linear_univar.jl)
     hc_a::Float64 = 0.125,
     hc_beta_a::Float64 = 1.0,
@@ -523,21 +630,13 @@ function init_bezier_univar(;
     hc_min_newton_iters::Int = 1,
 )
     Random.seed!(seed)
-
     H0 = make_homotopy_univar(degree, bezier_degree; seed=seed)
     starts = total_degree_start_solutions_univar(degree)
-
     p_custom = HomotopyContinuation.TrackerParameters(
-        hc_a,
-        hc_beta_a,
-        hc_beta_omega_p,
-        hc_beta_tau,
-        hc_strict_beta_tau,
-        hc_min_newton_iters,
+        hc_a, hc_beta_a, hc_beta_omega_p, hc_beta_tau, hc_strict_beta_tau, hc_min_newton_iters,
     )
-
     opts = HomotopyContinuation.TrackerOptions(
-        automatic_differentiation = 1,
+        automatic_differentiation = automatic_differentiation,
         max_steps = max_steps,
         max_step_size = max_step_size,
         max_initial_step_size = max_initial_step_size,
@@ -545,138 +644,131 @@ function init_bezier_univar(;
         extended_precision = extended_precision,
         parameters = p_custom,
     )
-
     tracker0 = HomotopyContinuation.Tracker(H0; options=opts)
-
     st = BezierUnivarState(
-        degree,
-        bezier_degree,
-        H0,
-        tracker0,
-        opts,
-        starts,
-        0,
-        BezierUnivarPoly[],
-        Any[],
+        degree, bezier_degree, H0, tracker0, opts, starts,
+        0, BezierUnivarPoly[], Any[],
     )
     _build_thread_cache!(st)
-
     __STATE__[(degree, bezier_degree)] = st
     return nothing
 end
 
-# Set control points, then run path tracking for all start solutions.
-# control_points: (bezier_degree+1, degree+1) complex, row j = j-th control point's coeff vector [a_n..a_0]
-# When compute_newton_iters=true: sequential (stdout/stderr capture); else: parallel with per-thread trackers.
 function track_bezier_paths_univar(degree::Int, bezier_degree::Int, control_points::AbstractArray{<:Complex,2}; compute_newton_iters::Bool=false)
     t0 = time()
     st = __STATE__[(degree, bezier_degree)]
     starts = st.starts
     n = length(starts)
+    old_enable_eval_counts = ENABLE_EVAL_COUNTS[]
+    ENABLE_EVAL_COUNTS[] = true
+    reset_eval_counts!()
 
-    if compute_newton_iters
-        # Sequential: safe with stdout/stderr capture for Newton iteration logging
-        H = st.H0
-        @assert size(control_points) == size(H.ctrl)
-        copyto!(H.ctrl, control_points)
-        compute_diffs!(H.diffs, H.ctrl, H.bezier_degree, H.max_derivative_order)
+    try
+        if compute_newton_iters
+            # Sequential: safe with stdout/stderr capture for Newton iteration logging
+            H = st.H0
+            @assert size(control_points) == size(H.ctrl)
+            copyto!(H.ctrl, control_points)
+            compute_diffs!(H.diffs, H.ctrl, H.bezier_degree, H.max_derivative_order)
+            H.last_tau_valid[] = false
 
-        success_flag = true
-        total_step_attempts = 0
-        total_newton_iterations = 0
-        total_accepted_steps = 0
-        total_rejected_steps = 0
-        tracking_time_sec = 0.0
+            success_flag = true
+            total_step_attempts = 0
+            total_newton_iterations = 0
+            total_accepted_steps = 0
+            total_rejected_steps = 0
+            tracking_time_sec = 0.0
 
-        for s in starts
-            pipe = Pipe()
-            buf = IOBuffer()
-            reader = @async begin
-                while true
-                    chunk = read(pipe, 8192)
-                    isempty(chunk) && break
-                    write(buf, chunk)
+            for s in starts
+                pipe = Pipe()
+                Base.link_pipe!(pipe)
+                buf = IOBuffer()
+                reader = @async begin
+                    while true
+                        chunk = read(pipe.out, 8192)
+                        isempty(chunk) && break
+                        write(buf, chunk)
+                    end
                 end
-            end
-            track_start = time()
-            pr = redirect_stdout(pipe) do
-                redirect_stderr(pipe) do
-                    track(st.tracker0, s; debug=true)
+                track_start = time()
+                pr = redirect_stdout(pipe.in) do
+                    redirect_stderr(pipe.in) do
+                        track(st.tracker0, s; debug=true)
+                    end
                 end
-            end
-            tracking_time_sec += time() - track_start
-            close(pipe.in)
-            wait(reader)
-            log = String(take!(buf))
-            for mt in eachmatch(r"iters\s*→\s*(\d+)", log)
-                total_newton_iterations += parse(Int, mt.captures[1])
+                tracking_time_sec += time() - track_start
+                close(pipe.in)
+                wait(reader)
+                log = String(take!(buf))
+                for mt in eachmatch(r"iters\s*→\s*(\d+)", log)
+                    total_newton_iterations += parse(Int, mt.captures[1])
+                end
+
+                _accepted_steps = accepted_steps(pr)
+                _rejected_steps = rejected_steps(pr)
+                total_step_attempts += _accepted_steps + _rejected_steps
+                total_accepted_steps += _accepted_steps
+                total_rejected_steps += _rejected_steps
+                success_flag &= (pr.return_code == :success)
             end
 
-            _accepted_steps = accepted_steps(pr)
-            _rejected_steps = rejected_steps(pr)
-            total_step_attempts += _accepted_steps + _rejected_steps
-            total_accepted_steps += _accepted_steps
-            total_rejected_steps += _rejected_steps
-            success_flag &= (pr.return_code == :success)
+            counts = eval_counts_total()
+            total_evaluate_and_jacobian_calls = get(counts, "evaluate_and_jacobian", 0)
+            runtime_sec = time() - t0
+            return (
+                success_flag=success_flag,
+                total_step_attempts=total_step_attempts,
+                total_newton_iterations=total_newton_iterations,
+                total_accepted_steps=total_accepted_steps,
+                total_rejected_steps=total_rejected_steps,
+                total_evaluate_and_jacobian_calls=total_evaluate_and_jacobian_calls,
+                runtime_sec=runtime_sec,
+                tracking_time_sec=tracking_time_sec,
+            )
         end
 
-        runtime_sec = time() - t0
+        _ensure_thread_cache!(st)
+        nt = st.nthreads_cached
+        @inbounds for tid in 1:nt
+            Hloc = st.Hs[tid]
+            copyto!(Hloc.ctrl, control_points)
+            compute_diffs!(Hloc.diffs, Hloc.ctrl, Hloc.bezier_degree, Hloc.max_derivative_order)
+            Hloc.last_tau_valid[] = false
+        end
+        acc = zeros(Int, n)
+        rej = zeros(Int, n)
+        ok  = trues(n)
+        tsec = zeros(Float64, n)
+        Threads.@threads for i in 1:n
+            tid = Threads.threadid()
+            tr = st.trackers[tid]
+            s = starts[i]
+            tstart = time()
+            pr = track(tr, s; debug=false)
+            tsec[i] = time() - tstart
+            acc[i] = accepted_steps(pr)
+            rej[i] = rejected_steps(pr)
+            ok[i]  = (pr.return_code == :success)
+        end
+        total_accepted_steps = sum(acc)
+        total_rejected_steps = sum(rej)
+        total_step_attempts  = total_accepted_steps + total_rejected_steps
+        success_flag         = all(ok)
+        counts = eval_counts_total()
+        total_evaluate_and_jacobian_calls = get(counts, "evaluate_and_jacobian", 0)
+        tracking_time_sec    = sum(tsec)
+        runtime_sec          = time() - t0
         return (
             success_flag=success_flag,
             total_step_attempts=total_step_attempts,
-            total_newton_iterations=total_newton_iterations,
+            total_newton_iterations=0,
             total_accepted_steps=total_accepted_steps,
             total_rejected_steps=total_rejected_steps,
+            total_evaluate_and_jacobian_calls=total_evaluate_and_jacobian_calls,
             runtime_sec=runtime_sec,
             tracking_time_sec=tracking_time_sec,
         )
+    finally
+        ENABLE_EVAL_COUNTS[] = old_enable_eval_counts
     end
-
-    # Parallel path tracking with cached per-thread trackers
-    _ensure_thread_cache!(st)
-    nt = st.nthreads_cached
-
-    # Copy control_points into each thread's homotopy (sequential; cheap)
-    @inbounds for tid in 1:nt
-        Hloc = st.Hs[tid]
-        @assert size(control_points) == size(Hloc.ctrl)
-        copyto!(Hloc.ctrl, control_points)
-        compute_diffs!(Hloc.diffs, Hloc.ctrl, Hloc.bezier_degree, Hloc.max_derivative_order)
-    end
-
-    acc = zeros(Int, n)
-    rej = zeros(Int, n)
-    ok  = trues(n)
-    tsec = zeros(Float64, n)
-
-    Threads.@threads for i in 1:n
-        tid = Threads.threadid()
-        tr = st.trackers[tid]
-        s = starts[i]
-
-        tstart = time()
-        pr = track(tr, s; debug=false)
-        tsec[i] = time() - tstart
-
-        acc[i] = accepted_steps(pr)
-        rej[i] = rejected_steps(pr)
-        ok[i]  = (pr.return_code == :success)
-    end
-
-    total_accepted_steps = sum(acc)
-    total_rejected_steps = sum(rej)
-    total_step_attempts  = total_accepted_steps + total_rejected_steps
-    success_flag         = all(ok)
-    tracking_time_sec    = sum(tsec)
-    runtime_sec          = time() - t0
-
-    return (
-        success_flag=success_flag,
-        total_step_attempts=total_step_attempts,
-        total_newton_iterations=0,
-        total_accepted_steps=total_accepted_steps,
-        total_rejected_steps=total_rejected_steps,
-        runtime_sec=runtime_sec,
-        tracking_time_sec=tracking_time_sec,
-    )
 end

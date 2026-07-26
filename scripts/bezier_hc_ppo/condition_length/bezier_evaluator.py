@@ -4,7 +4,6 @@ from __future__ import annotations
 import torch
 
 from .bezier import bezier_eval
-from .coeffs import full_coeffs_ascending_to_descending_ri
 from .complex_repr import complex_norm_ri
 from .config import ConditionLengthConfig
 from .discriminant_calculator import discriminant_univariate_logabs
@@ -22,7 +21,7 @@ def calculate_bezier_condition_length_numeric(
 ) -> torch.Tensor:
     """Condition length for a Bezier curve between control points (full coeffs).
 
-    P_ri: shape (d+1, degree+1, 2) in (Re, Im), ascending power [a_0,...,a_degree]
+    P_ri: shape (d+1, degree+1, 2) in (Re, Im), descending power [a_degree,...,a_0]
     per control point. Supports non-monic polynomials.
     """
     if loss_cfg is None:
@@ -39,13 +38,11 @@ def calculate_bezier_condition_length_numeric(
         raise ValueError("loss_cfg.samples_per_segment must be >= 1.")
 
     ts = make_uniform_ts(M, device=device, dtype=dtype)
-    gamma = bezier_eval(P_ri, ts)  # (M, degree+1, 2) ascending
+    a_ri = bezier_eval(P_ri, ts)  # (M, degree+1, 2) descending
 
     # Arc length (polyline through M samples)
-    seg_diffs = gamma[1:] - gamma[:-1]  # (M-1, degree+1, 2)
+    seg_diffs = a_ri[1:] - a_ri[:-1]  # (M-1, degree+1, 2)
     arc_len = complex_norm_ri(seg_diffs).sum()
-
-    a_ri = full_coeffs_ascending_to_descending_ri(gamma)  # (M, degree+1, 2)
     disc_logabs = discriminant_univariate_logabs(
         a_ri,
         eps=loss_cfg.disc_eps,
