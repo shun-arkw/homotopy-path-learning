@@ -6,6 +6,9 @@ src/homotopy_path_learning.egg-info/dependency_links.txt
 src/homotopy_path_learning.egg-info/requires.txt
 src/homotopy_path_learning.egg-info/top_level.txt
 src/homotopy_path_learning/backends/__init__.py
+src/homotopy_path_learning/backends/base.py
+src/homotopy_path_learning/backends/julia.py
+src/homotopy_path_learning/backends/types.py
 src/homotopy_path_learning/envs/__init__.py
 src/homotopy_path_learning/evaluation/__init__.py
 src/homotopy_path_learning/paths/__init__.py

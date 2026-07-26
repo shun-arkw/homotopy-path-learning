@@ -2,7 +2,7 @@
 
 julia_version = "1.11.1"
 manifest_format = "2.0"
-project_hash = "aec431e74759f0f9c28e4240160fe29254cf27a9"
+project_hash = "8d8bf07c619a5abce86bb882ba6be115dcdc5eb7"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "8b2b045b22740e4be20654175cc38291d48539db"
@@ -150,6 +150,12 @@ weakdeps = ["Dates", "LinearAlgebra"]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.1.1+0"
+
+[[deps.CondaPkg]]
+deps = ["JSON3", "Markdown", "MicroMamba", "Pidfile", "Pkg", "Preferences", "Scratch", "TOML", "pixi_jll"]
+git-tree-sha1 = "bd491d55b97a036caae1d78729bdb70bf7dababc"
+uuid = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
+version = "0.2.33"
 
 [[deps.ConstructionBase]]
 git-tree-sha1 = "b4b092499347b18a015186eae3042f72267106cb"
@@ -438,6 +444,18 @@ git-tree-sha1 = "0533e564aae234aff59ab625543145446d8b6ec2"
 uuid = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
 version = "1.7.1"
 
+[[deps.JSON3]]
+deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
+git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
+uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+version = "1.14.3"
+
+    [deps.JSON3.extensions]
+    JSON3ArrowExt = ["ArrowTypes"]
+
+    [deps.JSON3.weakdeps]
+    ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
+
 [[deps.LRUCache]]
 git-tree-sha1 = "5519b95a490ff5fe629c4a7aa3b3dfc9160498b3"
 uuid = "8ac3fa9e-de4c-5943-b1dc-09c6b5f20637"
@@ -457,6 +475,11 @@ deps = ["ArrayInterface", "LinearAlgebra", "ManualMemory", "SIMDTypes", "Static"
 git-tree-sha1 = "a9eaadb366f5493a5654e843864c13d8b107548c"
 uuid = "10f19ff3-798f-405d-979b-55457f8fc047"
 version = "0.1.17"
+
+[[deps.LazyArtifacts]]
+deps = ["Artifacts", "Pkg"]
+uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
+version = "1.11.0"
 
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -583,6 +606,12 @@ version = "1.11.0"
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
 version = "2.28.6+0"
+
+[[deps.MicroMamba]]
+deps = ["Pkg", "Scratch", "micromamba_jll"]
+git-tree-sha1 = "011cab361eae7bcd7d278f0a7a00ff9c69000c51"
+uuid = "0b3b1443-0f03-428d-bdfb-f27f9c1191ea"
+version = "0.1.14"
 
 [[deps.Missings]]
 deps = ["DataAPI"]
@@ -712,11 +741,23 @@ git-tree-sha1 = "34c0e9ad262e5f7fc75b10a9952ca7692cfc5fbe"
 uuid = "d96e819e-fc66-5662-9728-84c9c7592b0a"
 version = "0.12.3"
 
+[[deps.Parsers]]
+deps = ["Dates", "PrecompileTools", "UUIDs"]
+git-tree-sha1 = "7d2f8f21da5db6a806faf7b9b292296da42b2810"
+uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
+version = "2.8.3"
+
 [[deps.Permutations]]
 deps = ["Combinatorics", "LinearAlgebra", "Random"]
 git-tree-sha1 = "b1f03a4943c62552a12c7f95965b76c3f91cf5b7"
 uuid = "2ae35dd2-176d-5d53-8349-f30d82d94d4f"
 version = "0.4.23"
+
+[[deps.Pidfile]]
+deps = ["FileWatching", "Test"]
+git-tree-sha1 = "2d8aaf8ee10df53d0dfb9b8ee44ae7c04ced2b03"
+uuid = "fa939f87-e72e-5be4-a000-7fc836dbe307"
+version = "1.3.0"
 
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "Random", "SHA", "TOML", "Tar", "UUIDs", "p7zip_jll"]
@@ -805,6 +846,20 @@ git-tree-sha1 = "1d36ef11a9aaf1e8b74dacc6a731dd1de8fd493d"
 uuid = "43287f4e-b6f4-7ad1-bb20-aadabca52c3d"
 version = "1.3.0"
 
+[[deps.PythonCall]]
+deps = ["CondaPkg", "Dates", "Libdl", "MacroTools", "Markdown", "Pkg", "Serialization", "Tables", "UnsafePointers"]
+git-tree-sha1 = "982f3f017f08d31202574ef6bdcf8b3466430bea"
+uuid = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
+version = "0.9.31"
+
+    [deps.PythonCall.extensions]
+    CategoricalArraysExt = "CategoricalArrays"
+    PyCallExt = "PyCall"
+
+    [deps.PythonCall.weakdeps]
+    CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+    PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
+
 [[deps.QuadGK]]
 deps = ["DataStructures", "LinearAlgebra"]
 git-tree-sha1 = "9da16da70037ba9d701192e27befedefb91ec284"
@@ -882,6 +937,12 @@ deps = ["HashArrayMappedTries", "Logging"]
 git-tree-sha1 = "c3b2323466378a2ba15bea4b2f73b081e022f473"
 uuid = "7e506255-f358-4e82-b7e4-beb19740aa63"
 version = "1.5.0"
+
+[[deps.Scratch]]
+deps = ["Dates"]
+git-tree-sha1 = "9b81b8393e50b7d4e6d0a9f14e192294d3b7c109"
+uuid = "6c6a2e73-6563-6170-7368-637461726353"
+version = "1.3.0"
 
 [[deps.SemialgebraicSets]]
 deps = ["CommonSolve", "LinearAlgebra", "MultivariatePolynomials", "MutableArithmetics", "Random"]
@@ -1049,6 +1110,12 @@ version = "0.7.2"
     SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
+[[deps.StructTypes]]
+deps = ["Dates", "UUIDs"]
+git-tree-sha1 = "159331b30e94d7b11379037feeb9b690950cace8"
+uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+version = "1.11.0"
+
 [[deps.SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
 uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
@@ -1117,6 +1184,11 @@ version = "1.0.2"
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 version = "1.11.0"
 
+[[deps.UnsafePointers]]
+git-tree-sha1 = "c81331b3b2e60a982be57c046ec91f599ede674a"
+uuid = "e17b2a0c-0bdf-430a-bd0c-3a23cae4ff39"
+version = "1.0.0"
+
 [[deps.VectorizationBase]]
 deps = ["ArrayInterface", "CPUSummary", "HostCPUFeatures", "IfElse", "LayoutPointers", "Libdl", "LinearAlgebra", "SIMDTypes", "Static", "StaticArrayInterface"]
 git-tree-sha1 = "d1d9a935a26c475ebffd54e9c7ad11627c43ea85"
@@ -1139,6 +1211,12 @@ deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
 version = "5.11.0+0"
 
+[[deps.micromamba_jll]]
+deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl"]
+git-tree-sha1 = "2ca2ac0b23a8e6b76752453e08428b3b4de28095"
+uuid = "f8abcde7-e9b7-5caa-b8af-a437887ae8e4"
+version = "1.5.12+0"
+
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
@@ -1148,3 +1226,9 @@ version = "1.59.0+0"
 deps = ["Artifacts", "Libdl"]
 uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 version = "17.4.0+2"
+
+[[deps.pixi_jll]]
+deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl"]
+git-tree-sha1 = "f349584316617063160a947a82638f7611a8ef0f"
+uuid = "4d7b5844-a134-5dcd-ac86-c8f19cd51bed"
+version = "0.41.3+0"

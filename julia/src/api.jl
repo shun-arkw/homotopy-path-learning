@@ -10,6 +10,32 @@ end
 
 const _BEZIER_PHAM_STATE = Ref{Union{Nothing, BezierPhamState}}(nothing)
 
+function make_tracker_options(;
+    max_steps::Integer = 50_000,
+    max_step_size::Real = 0.05,
+    max_initial_step_size::Real = 0.05,
+    min_step_size::Real = 1e-12,
+    extended_precision::Bool = false,
+)
+    max_steps > 0 || throw(ArgumentError("max_steps must be positive."))
+    all(isfinite, (max_step_size, max_initial_step_size, min_step_size)) ||
+        throw(ArgumentError("step sizes must be finite."))
+    max_step_size > 0 || throw(ArgumentError("max_step_size must be positive."))
+    max_initial_step_size > 0 || throw(ArgumentError("max_initial_step_size must be positive."))
+    min_step_size > 0 || throw(ArgumentError("min_step_size must be positive."))
+    min_step_size <= max_step_size || throw(ArgumentError("min_step_size must be <= max_step_size."))
+    min_step_size <= max_initial_step_size ||
+        throw(ArgumentError("min_step_size must be <= max_initial_step_size."))
+
+    return HomotopyContinuation.TrackerOptions(
+        max_steps = Int(max_steps),
+        max_step_size = Float64(max_step_size),
+        max_initial_step_size = Float64(max_initial_step_size),
+        min_step_size = Float64(min_step_size),
+        extended_precision = extended_precision,
+    )
+end
+
 function _linear_control_points(start_coeffs::AbstractVector{<:Complex}, target_coeffs::AbstractVector{<:Complex}, bezier_degree::Int)
     bezier_degree >= 1 || throw(ArgumentError("bezier_degree must be positive."))
     control_points = Matrix{ComplexF64}(undef, bezier_degree + 1, length(start_coeffs))
@@ -62,4 +88,39 @@ end
 function clear_state!()
     _BEZIER_PHAM_STATE[] = nothing
     return nothing
+end
+
+bezier_pham_state_initialized() = _BEZIER_PHAM_STATE[] !== nothing
+
+function bezier_pham_state_snapshot()
+    state = _require_state()
+    return (
+        initialized = true,
+        nvars = state.spec.nvars,
+        degrees = copy(state.spec.degrees),
+        exponents = copy(state.spec.exponents),
+        offsets = copy(state.spec.offsets),
+        leading_indices = copy(state.spec.leading_indices),
+        constant_indices = copy(state.spec.constant_indices),
+        bezier_degree = state.bezier_degree,
+        control_points = copy(state.homotopy.control_points),
+        starts = copy(state.starts),
+    )
+end
+
+function tracking_result_payload(result::TrackingResult)
+    return (
+        success = result.success,
+        n_paths = result.n_paths,
+        n_success = result.n_success,
+        n_failed = result.n_failed,
+        accepted_steps = result.accepted_steps,
+        rejected_steps = result.rejected_steps,
+        per_path_accepted_steps = copy(result.per_path_accepted_steps),
+        per_path_rejected_steps = copy(result.per_path_rejected_steps),
+        path_success = copy(result.path_success),
+        endpoints = copy(result.endpoints),
+        residual_norms = copy(result.residual_norms),
+        failure_codes = Tuple(result.failure_codes),
+    )
 end

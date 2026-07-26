@@ -4,6 +4,12 @@
 
 PythonからJuliaへは，Pythonのクラスを直接渡さず，数値配列とスカラー値だけを渡す．Julia側は初期化時に多項式系仕様を受け取り，追跡ごとには制御点のみを受け取る．
 
+Phase 4のPython–Julia接続では，参照Docker環境内の
+`juliacall==0.9.31`を使用する．`juliacall`のimport前に，
+`PYTHON_JULIACALL_EXE`を参照Docker内のJulia実行ファイルへ，
+`PYTHON_JULIACALL_PROJECT`をリポジトリの`julia/`プロジェクトへ
+設定する．実行時に`Pkg.add`を呼ばず，Juliaの自動取得も許可しない．
+
 ## 2．多項式系仕様
 
 ### `degrees`
@@ -179,6 +185,9 @@ class TrackingResult:
 - 失敗理由
 - 最終追跡パラメータ
 - 最小到達ステップ幅
+
+Python側の`TrackingResult`へ変換する際，Juliaが所有する配列への参照は
+保持せず，NumPy配列としてコピーする．
 
 ## 8．キャッシュキー
 

@@ -28,9 +28,13 @@ export PolynomialSystemSpec,
     validate_control_points,
     TrackingResult,
     track_all_paths,
+    make_tracker_options,
     init_bezier_pham!,
     track_bezier_paths!,
     warmup!,
-    clear_state!
+    clear_state!,
+    bezier_pham_state_initialized,
+    bezier_pham_state_snapshot,
+    tracking_result_payload
 
 end

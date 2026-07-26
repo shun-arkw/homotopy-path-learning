@@ -1,4 +1,11 @@
 numpy>=1.25.0
 
+[integration]
+pytest>=8.0
+juliacall==0.9.31
+
+[julia]
+juliacall==0.9.31
+
 [test]
 pytest>=8.0
