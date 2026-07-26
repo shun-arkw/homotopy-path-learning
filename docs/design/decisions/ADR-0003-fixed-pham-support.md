@@ -2,7 +2,7 @@
 
 ## 状態
 
-Proposed．
+Accepted.
 
 ## 背景
 
