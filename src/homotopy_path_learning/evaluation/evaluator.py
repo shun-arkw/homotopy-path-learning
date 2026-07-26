@@ -94,8 +94,9 @@ def evaluate_policy_rows(
     try:
         for instance_id, target_seed in enumerate(seeds):
             observation, reset_info = env.reset(seed=target_seed)
-            linear_target = np.array(reset_info["target_coefficients"], dtype=np.complex128, copy=True)
-            linear_cost = float(reset_info["linear_cost"])
+            context = env.current_episode_context()
+            linear_target = np.array(context.target_coefficients, dtype=np.complex128, copy=True)
+            linear_cost = float(context.linear_cost.mean)
             if "Linear" in methods:
                 rows.append(
                     _row(
@@ -104,29 +105,30 @@ def evaluate_policy_rows(
                         instance_id=instance_id,
                         target_seed=target_seed,
                         method="Linear",
-                        success=bool(reset_info["linear_success"]),
-                        n_paths=int(reset_info["linear_n_paths"]),
-                        n_success=int(reset_info["linear_n_success"]),
-                        n_failed=int(reset_info["linear_n_failed"]),
+                        success=bool(context.linear_result.success),
+                        n_paths=int(context.linear_result.n_paths),
+                        n_success=int(context.linear_result.n_success),
+                        n_failed=int(context.linear_result.n_failed),
                         mean_cost=linear_cost,
-                        accepted_steps=int(reset_info["linear_accepted_steps"]),
-                        rejected_steps=int(reset_info["linear_rejected_steps"]),
+                        accepted_steps=int(context.linear_result.accepted_steps),
+                        rejected_steps=int(context.linear_result.rejected_steps),
                         improvement=0.0,
                         reward=0.0,
-                        residual_norms=reset_info["linear_residual_norms"],
-                        failure_codes=reset_info["linear_failure_codes"],
+                        residual_norms=context.linear_result.residual_norms,
+                        failure_codes=context.linear_result.failure_codes,
                         action=np.zeros(env.action_space.shape, dtype=np.float32),
                         elapsed_seconds=0.0,
                     )
                 )
 
             if "LearnedBezier" in methods:
-                observation, reset_info = env.reset(seed=target_seed)
-                if not np.array_equal(linear_target, reset_info["target_coefficients"]):
+                if not np.array_equal(linear_target, context.target_coefficients):
                     raise RuntimeError("LearnedBezier target coefficients differ from Linear target.")
                 start = time.time()
                 action = _action_from_agent(agent, observation, device=device)
-                _, reward, _, _, info = env.step(action)
+                evaluation = env.evaluate_action_against_context(context, action)
+                reward = evaluation.reward
+                info = evaluation.info
                 rows.append(
                     _row(
                         config=config,
@@ -152,15 +154,16 @@ def evaluate_policy_rows(
 
             if "RandomBezier" in methods:
                 for random_index in range(config.evaluation.random_actions_per_instance):
-                    observation, reset_info = env.reset(seed=target_seed)
-                    if not np.array_equal(linear_target, reset_info["target_coefficients"]):
+                    if not np.array_equal(linear_target, context.target_coefficients):
                         raise RuntimeError("RandomBezier target coefficients differ from Linear target.")
                     start = time.time()
                     action = random_rng.uniform(
                         low=env.action_space.low,
                         high=env.action_space.high,
                     ).astype(np.float32)
-                    _, reward, _, _, info = env.step(action)
+                    evaluation = env.evaluate_action_against_context(context, action)
+                    reward = evaluation.reward
+                    info = evaluation.info
                     rows.append(
                         _row(
                             config=config,

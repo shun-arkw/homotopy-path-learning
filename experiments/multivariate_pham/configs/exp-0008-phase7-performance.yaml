@@ -1,0 +1,85 @@
+experiment:
+  id: EXP-0008
+  name: phase7-performance
+  seed: 0
+  device: cpu
+
+system:
+  degrees: [2, 2]
+  free_exponents:
+    -
+      - [1, 0]
+      - [0, 1]
+      - [0, 0]
+    -
+      - [1, 0]
+      - [0, 1]
+      - [0, 0]
+
+sampler:
+  type: complex_uniform
+  bound: 1.0
+
+path:
+  bezier_degree: 3
+  latent_dim: 4
+  basis_seed: 0
+  action_limit: 1.0
+
+tracker:
+  max_steps: 50000
+  max_step_size: 0.05
+  max_initial_step_size: 0.05
+  min_step_size: 1.0e-12
+  extended_precision: false
+
+environment:
+  reject_weight: 1.0
+  failure_penalty: 100000.0
+  reward_scale: 1.0
+  warmup_backend: true
+
+ppo:
+  num_envs: 1
+  total_timesteps: 64
+  rollout_steps: 64
+  minibatch_size: 32
+  update_epochs: 1
+  learning_rate: 0.0003
+  anneal_learning_rate: false
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  clip_value_loss: true
+  value_coef: 0.5
+  entropy_coef: 0.0
+  max_grad_norm: 0.5
+  normalize_advantage: true
+  target_kl: null
+  hidden_sizes: [64, 64]
+  activation: tanh
+  actor_logstd_init: -0.5
+  checkpoint_interval: 64
+  evaluation_interval_updates: 1
+
+evaluation:
+  seed: 10000
+  num_instances: 100
+  random_action_seed: 20000
+  random_actions_per_instance: 1
+  deterministic_policy: true
+
+output:
+  root: outputs
+  save_last_checkpoint: true
+  save_best_checkpoint: true
+  save_training_csv: true
+
+performance:
+  warmup_runs: 5
+  measure_runs: 30
+  trials: 3
+  fixed_problem_count: 100
+  repeated_target_seed: 12345
+  evaluation_seed: 10000
+  action_seed: 20000

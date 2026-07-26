@@ -105,9 +105,9 @@ $$
 ```text
 固定評価データセットを読み込む
   ↓
-各目的系に対して線形パスを追跡
+各目的系に対して線形パスを1回だけ追跡
   ↓
-各目的系に対して学習済み方策を実行
+同じ目的係数とJ_linを共有して各評価行動を実行
   ↓
 成功率，平均，中央値，標準偏差，最小，最大を集計
   ↓
@@ -120,6 +120,12 @@ Phase 6の固定評価データは，目的係数そのものではなく
 `evaluation.seed + instance_index`で生成されるseed列として保存する．
 各seedについて，Linear，RandomBezier，LearnedBezierは同じ`env.reset(seed=...)`により
 同一目的係数を使用する．
+
+Phase 7では，評価専用のepisode contextを用いて，同一seedについて
+`env.reset(seed=...)`を1回だけ実行する．このcontextには目的係数，線形制御点，
+線形追跡結果，線形コスト`J_lin`のPython所有コピーを保持する．
+Linear，RandomBezier，LearnedBezierは同じcontextを共有し，step相当の行動評価では
+線形追跡を再実行しない．通常のGymnasium `reset()`/`step()`の挙動は変更しない．
 
 学習時のPPOは単一環境を逐次的に使用する．rolloutには観測，有界行動，pre-tanh行動，
 old log probability，報酬，terminated/truncated，value，環境診断情報を保存する．
@@ -144,6 +150,20 @@ outputs/EXP-0004/<run-id>/
 ├── benchmark/benchmark.csv
 ├── benchmark/benchmark_summary.csv
 └── analysis/summary.md
+```
+
+Phase 7の性能測定出力は次である．
+
+```text
+outputs/EXP-0008/<run-id>/
+├── config.yaml
+├── performance.json
+├── performance.csv
+├── equivalence.json
+├── profiling/
+│   ├── python.txt
+│   └── julia.txt
+└── summary.md
 ```
 
 ## 5．再現性情報

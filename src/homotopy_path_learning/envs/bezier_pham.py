@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import gymnasium as gym
@@ -45,6 +46,78 @@ def _finite_float(name: str, value: object) -> float:
     if not np.isfinite(normalized):
         raise ValueError(f"{name} must be finite, got {value!r}.")
     return normalized
+
+
+def _copy_tracking_result(result: TrackingResult) -> TrackingResult:
+    """Return a Python-owned deep copy of a tracking result."""
+
+    return TrackingResult(
+        success=bool(result.success),
+        n_paths=int(result.n_paths),
+        n_success=int(result.n_success),
+        n_failed=int(result.n_failed),
+        accepted_steps=int(result.accepted_steps),
+        rejected_steps=int(result.rejected_steps),
+        per_path_accepted_steps=np.array(
+            result.per_path_accepted_steps,
+            dtype=np.int64,
+            copy=True,
+        ),
+        per_path_rejected_steps=np.array(
+            result.per_path_rejected_steps,
+            dtype=np.int64,
+            copy=True,
+        ),
+        path_success=np.array(result.path_success, dtype=np.bool_, copy=True),
+        endpoints=np.array(result.endpoints, dtype=np.complex128, copy=True),
+        residual_norms=np.array(result.residual_norms, dtype=np.float64, copy=True),
+        failure_codes=tuple(result.failure_codes),
+    )
+
+
+@dataclass(frozen=True)
+class BezierPhamEpisodeContext:
+    """Python-owned snapshot of one sampled target problem.
+
+    Attributes:
+        observation: Shape ``(2 * n_free_coeffs,)``, dtype ``float32``.
+        target_coefficients: Shape ``(M,)``, dtype ``complex128``.
+        linear_control_points: Shape ``(bezier_degree + 1, M)``,
+            dtype ``complex128``.
+        linear_result: Tracking diagnostics for the zero-action linear path.
+        linear_cost: Mean and per-path costs for ``linear_result``.
+
+    The arrays are copies of environment state. Mutating a context obtained
+    from :meth:`BezierPhamEnv.current_episode_context` cannot mutate the
+    environment's cached episode state.
+    """
+
+    observation: npt.NDArray[np.float32]
+    target_coefficients: npt.NDArray[np.complex128]
+    linear_control_points: npt.NDArray[np.complex128]
+    linear_result: TrackingResult
+    linear_cost: TrackingCost
+
+
+@dataclass(frozen=True)
+class BezierPhamActionEvaluation:
+    """Result of evaluating one latent action against a cached context.
+
+    Attributes:
+        observation: The unchanged one-step observation, shape
+            ``(2 * n_free_coeffs,)`` and dtype ``float32``.
+        reward: Finite Python ``float`` equal to
+            ``reward_scale * (J_lin - J_bez)``.
+        info: Gymnasium-style diagnostic dictionary with Python-owned arrays.
+        tracking_result: Bezier tracking result for the action.
+        tracking_cost: Mean and per-path costs for ``tracking_result``.
+    """
+
+    observation: npt.NDArray[np.float32]
+    reward: float
+    info: dict[str, Any]
+    tracking_result: TrackingResult
+    tracking_cost: TrackingCost
 
 
 class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
@@ -211,6 +284,97 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
             return None
         return float(self._linear_cost.mean)
 
+    def current_episode_context(self) -> BezierPhamEpisodeContext:
+        """Return a copy of the current sampled target and linear baseline.
+
+        This method does not alter Gymnasium reset/step semantics. It exists
+        for evaluation code that needs to compare multiple actions against the
+        same target coefficients and cached ``J_lin`` without repeating the
+        linear trace for every method.
+        """
+
+        if self._closed:
+            raise RuntimeError("cannot inspect a closed BezierPhamEnv.")
+        if not self._has_reset:
+            raise RuntimeError("reset() must be called before requesting an episode context.")
+        assert self._observation is not None
+        assert self._target_coefficients is not None
+        assert self._linear_control_points is not None
+        assert self._linear_result is not None
+        assert self._linear_cost is not None
+        return BezierPhamEpisodeContext(
+            observation=np.array(self._observation, dtype=np.float32, copy=True),
+            target_coefficients=np.array(
+                self._target_coefficients,
+                dtype=np.complex128,
+                copy=True,
+            ),
+            linear_control_points=np.array(
+                self._linear_control_points,
+                dtype=np.complex128,
+                copy=True,
+            ),
+            linear_result=_copy_tracking_result(self._linear_result),
+            linear_cost=TrackingCost(
+                mean=float(self._linear_cost.mean),
+                per_path=np.array(self._linear_cost.per_path, dtype=np.float64, copy=True),
+            ),
+        )
+
+    def evaluate_action_against_context(
+        self,
+        context: BezierPhamEpisodeContext,
+        action: npt.ArrayLike,
+    ) -> BezierPhamActionEvaluation:
+        """Evaluate ``action`` against an existing episode context.
+
+        The method tracks only the Bezier path induced by ``action``. It does
+        not call ``reset()``, does not recompute the linear baseline, and does
+        not terminate the Gymnasium episode. Program errors from the backend
+        are propagated unchanged by this method's call stack.
+        """
+
+        if self._closed:
+            raise RuntimeError("cannot evaluate action on a closed BezierPhamEnv.")
+        if not isinstance(context, BezierPhamEpisodeContext):
+            raise TypeError("context must be a BezierPhamEpisodeContext.")
+        action_vector = self._validate_action(action)
+        control_points = self.parameterization.build_control_points(
+            self.start_coefficients,
+            np.array(context.target_coefficients, dtype=np.complex128, copy=True),
+            action_vector,
+        )
+        bezier_result = self._backend.track(control_points)
+        bezier_cost_value = tracking_cost(
+            bezier_result,
+            reject_weight=self.reject_weight,
+            failure_penalty=self.failure_penalty,
+        )
+        reward = reward_from_costs(
+            linear_cost=context.linear_cost.mean,
+            bezier_cost=bezier_cost_value.mean,
+            reward_scale=self.reward_scale,
+        )
+        info = self._action_info(
+            target_coefficients=context.target_coefficients,
+            control_points=control_points,
+            linear_result=context.linear_result,
+            linear_cost=context.linear_cost,
+            bezier_result=bezier_result,
+            bezier_cost=bezier_cost_value,
+            reward=reward,
+        )
+        return BezierPhamActionEvaluation(
+            observation=np.array(context.observation, dtype=np.float32, copy=True),
+            reward=reward,
+            info=info,
+            tracking_result=_copy_tracking_result(bezier_result),
+            tracking_cost=TrackingCost(
+                mean=float(bezier_cost_value.mean),
+                per_path=np.array(bezier_cost_value.per_path, dtype=np.float64, copy=True),
+            ),
+        )
+
     def reset(
         self,
         *,
@@ -269,32 +433,10 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
         assert self._linear_result is not None
         assert self._linear_cost is not None
 
-        action_vector = self._validate_action(action)
-        control_points = self.parameterization.build_control_points(
-            self.start_coefficients,
-            self._target_coefficients,
-            action_vector,
-        )
-        bezier_result = self._backend.track(control_points)
-        bezier_cost_value = tracking_cost(
-            bezier_result,
-            reject_weight=self.reject_weight,
-            failure_penalty=self.failure_penalty,
-        )
-        reward = reward_from_costs(
-            linear_cost=self._linear_cost.mean,
-            bezier_cost=bezier_cost_value.mean,
-            reward_scale=self.reward_scale,
-        )
+        evaluation = self.evaluate_action_against_context(self.current_episode_context(), action)
 
         self._terminated = True
-        info = self._step_info(
-            control_points=control_points,
-            bezier_result=bezier_result,
-            bezier_cost=bezier_cost_value,
-            reward=reward,
-        )
-        return self._observation.copy(), reward, True, False, info
+        return self._observation.copy(), evaluation.reward, True, False, evaluation.info
 
     def render(self) -> None:
         """Rendering is intentionally not implemented for the initial environment."""
@@ -396,40 +538,44 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
             "linear_failure_codes": tuple(self._linear_result.failure_codes),
         }
 
-    def _step_info(
+    def _action_info(
         self,
         *,
+        target_coefficients: npt.NDArray[np.complex128],
         control_points: npt.NDArray[np.complex128],
+        linear_result: TrackingResult,
+        linear_cost: TrackingCost,
         bezier_result: TrackingResult,
         bezier_cost: TrackingCost,
         reward: float,
     ) -> dict[str, Any]:
-        assert self._target_coefficients is not None
-        assert self._linear_result is not None
-        assert self._linear_cost is not None
-        improvement = float(self._linear_cost.mean - bezier_cost.mean)
+        improvement = float(linear_cost.mean - bezier_cost.mean)
         return {
-            "target_coefficients": self._target_coefficients.copy(),
+            "target_coefficients": np.array(target_coefficients, dtype=np.complex128, copy=True),
             "control_points": control_points.copy(),
-            "linear_cost": float(self._linear_cost.mean),
+            "linear_cost": float(linear_cost.mean),
             "bezier_cost": float(bezier_cost.mean),
             "cost_improvement": improvement,
             "reward": float(reward),
-            "linear_success": bool(self._linear_result.success),
+            "linear_success": bool(linear_result.success),
             "bezier_success": bool(bezier_result.success),
-            "linear_n_success": int(self._linear_result.n_success),
-            "linear_n_failed": int(self._linear_result.n_failed),
+            "linear_n_success": int(linear_result.n_success),
+            "linear_n_failed": int(linear_result.n_failed),
             "bezier_n_success": int(bezier_result.n_success),
             "bezier_n_failed": int(bezier_result.n_failed),
-            "linear_accepted_steps": int(self._linear_result.accepted_steps),
-            "linear_rejected_steps": int(self._linear_result.rejected_steps),
+            "linear_accepted_steps": int(linear_result.accepted_steps),
+            "linear_rejected_steps": int(linear_result.rejected_steps),
             "bezier_accepted_steps": int(bezier_result.accepted_steps),
             "bezier_rejected_steps": int(bezier_result.rejected_steps),
-            "linear_per_path_costs": self._linear_cost.per_path.copy(),
+            "linear_per_path_costs": linear_cost.per_path.copy(),
             "bezier_per_path_costs": bezier_cost.per_path.copy(),
             "bezier_residual_norms": bezier_result.residual_norms.copy(),
             "bezier_failure_codes": tuple(bezier_result.failure_codes),
         }
 
 
-__all__ = ["BezierPhamEnv"]
+__all__ = [
+    "BezierPhamActionEvaluation",
+    "BezierPhamEnv",
+    "BezierPhamEpisodeContext",
+]

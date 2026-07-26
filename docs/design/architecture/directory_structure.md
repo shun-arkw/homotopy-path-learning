@@ -44,7 +44,8 @@ homotopy-path-learning/
 │   │   ├── train.py
 │   │   ├── evaluate.py
 │   │   ├── benchmark.py
-│   │   └── analyze.py
+│   │   ├── analyze.py
+│   │   └── profile.py
 │   └── univariate/
 │       └── README.md
 │
@@ -83,6 +84,10 @@ src/homotopy_path_learning/
 │   ├── ppo.py
 │   ├── checkpoint.py
 │   └── train_utils.py
+├── performance/
+│   ├── timing.py
+│   ├── comparison.py
+│   └── reporting.py
 └── evaluation/
     ├── datasets.py
     ├── metrics.py
@@ -93,6 +98,8 @@ src/homotopy_path_learning/
 Phase 6では，`rl/`を環境非依存のPPO実装とし，Bezier/Pham固有の情報は
 `experiments/multivariate_pham/`のCLIまたは`evaluation/`で扱う．
 PPO本体には`linear_cost`，`bezier_cost`，多項式系仕様，Juliaバックエンドを埋め込まない．
+Phase 7では，明示的に実行する性能測定と同値性比較を`performance/`へ配置する．
+通常の学習・評価経路へ無条件のプロファイリング処理は追加しない．
 
 ## 3．`julia/`
 

@@ -204,6 +204,16 @@ python3 experiments/multivariate_pham/analyze.py --run-dir outputs/EXP-0004/<run
 - 評価データのバッチ処理
 
 各最適化の前後で数値結果が変化しないことをテストする．
+Phase 7では，明示的な性能測定CLIを追加し，baselineとoptimizedの
+`performance.json`，`performance.csv`，`equivalence.json`，`summary.md`を保存する．
+測定条件は`experiments/multivariate_pham/configs/exp-0008-phase7-performance.yaml`で管理し，
+`python3 experiments/multivariate_pham/profile.py --mode baseline|optimized`で実行する．
+
+初期の採用済み最適化は，固定評価時の同一target seedに対する線形追跡重複の削減である．
+Gymnasiumの`reset()`/`step()`の意味は変更せず，評価専用のepisode contextで
+目的係数，線形制御点，線形追跡結果，`J_lin`を共有する．
+Tracker再利用，Python-Julia batch API，threaded mode，Juliaカーネル最適化は，
+安全性または実測改善を確認できるまで既定経路へ導入しない．
 
 ## 5．Codexへの制約
 

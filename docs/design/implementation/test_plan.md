@@ -99,7 +99,20 @@ $t$方向の1階から必要階数までのTaylor係数を，有限差分また�
 - 評価CSV，benchmark CSV，benchmark summary CSV，summary Markdownを生成する．
 - 参照Docker内の実`BezierPhamEnv`でPhase 6 CLI smokeを実行する．
 
-## 6．最初のテスト問題
+## 6．Phase 7性能・同値性テスト
+
+- 性能計測値が有限かつ非負であることを確認する．
+- 空の測定結果を拒否し，mean，median，母標準偏差，p50，p95，
+  throughputが手計算と一致することを確認する．
+- baselineとoptimizedの評価CSVを，elapsed timeとrun IDを除外して比較する．
+- 評価用episode contextの配列コピーを外部で変更しても，環境内部状態が変化しないことを確認する．
+- 同一target seedについて，Linear，RandomBezier，LearnedBezierが同じ`J_lin`を共有し，
+  線形追跡が1回だけ実行されることを確認する．
+- 固定100問題の詳細tracking recordsで，path success，accepted/rejected steps，
+  failure code，endpoint，residualに差分がないことを確認する．
+- Phase 7後もPhase 6のtrain/evaluate/benchmark/analyzeが成功することを確認する．
+
+## 7．最初のテスト問題
 
 ### ケースA
 
@@ -127,7 +140,7 @@ $$
 
 中間制御点を線形補間上に置き，ベジェ評価が直線補間と一致することを確認する．
 
-## 6．受入基準
+## 8．受入基準
 
 PPO学習へ進む前に，次を満たす必要がある．
 

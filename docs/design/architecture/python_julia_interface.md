@@ -189,6 +189,11 @@ class TrackingResult:
 Python側の`TrackingResult`へ変換する際，Juliaが所有する配列への参照は
 保持せず，NumPy配列としてコピーする．
 
+Phase 7の性能測定では，Julia境界の公開追跡APIは変更しない．
+評価処理の最適化はPython側で同一target seedの線形追跡結果を共有することで行う．
+Tracker再利用，Python-Julia batch API，threaded modeは，安全性と実測改善を
+直接確認できるまで公開APIとして採用しない．
+
 ## 8．キャッシュキー
 
 Julia側の状態は，少なくとも次から構成されるキーで管理する．

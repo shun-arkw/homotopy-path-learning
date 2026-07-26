@@ -62,3 +62,24 @@ outputs/EXP-0004/<run-id>/
 ```
 
 EXP-0004は学習パイプラインの接続確認であり，性能改善の結論を目的としない．
+
+## EXP-0008
+
+Phase 7の性能測定は次で管理する．
+
+```text
+実行設定:
+experiments/multivariate_pham/configs/exp-0008-phase7-performance.yaml
+
+実験CLI:
+experiments/multivariate_pham/profile.py
+
+実験記録:
+docs/experiments/EXP-0008-phase7-performance/
+
+生成物:
+outputs/EXP-0008/<run-id>/
+```
+
+EXP-0008は測定駆動の性能改善確認であり，小規模smoke系の結果から
+大規模問題全般の性能結論を出さない．

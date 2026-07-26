@@ -51,4 +51,5 @@ markers = [
     "integration: requires the reference Julia runtime and Julia project",
     "slow: long-running smoke or regression test",
     "phase6: PPO training and experiment pipeline tests",
+    "phase7: performance and numerical-equivalence tests",
 ]

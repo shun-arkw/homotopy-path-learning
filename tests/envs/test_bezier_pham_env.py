@@ -140,6 +140,51 @@ def test_reset_info_arrays_are_independent(smoke_spec, target_coefficients) -> N
     assert env.linear_cost == 6.0
 
 
+def test_episode_context_arrays_are_independent(smoke_spec, target_coefficients) -> None:
+    env = make_env(smoke_spec, target_coefficients=target_coefficients)
+    env.reset(seed=1)
+
+    context = env.current_episode_context()
+    context.target_coefficients[1] = 99.0 + 0.0j
+    context.linear_control_points[0, 1] = 99.0 + 0.0j
+    context.linear_cost.per_path[0] = 99.0
+
+    np.testing.assert_array_equal(env.target_coefficients, target_coefficients)
+    assert env.linear_control_points[0, 1] != 99.0 + 0.0j
+    assert env.linear_cost == 6.0
+
+
+def test_evaluate_action_against_context_does_not_recompute_linear_baseline(
+    smoke_spec,
+    target_coefficients,
+) -> None:
+    backend = FakeBackend(
+        [
+            make_tracking_result(accepted=(10, 10, 10, 10), rejected=(0, 0, 0, 0)),
+            make_tracking_result(accepted=(5, 5, 5, 5), rejected=(0, 0, 0, 0)),
+            make_tracking_result(accepted=(6, 6, 6, 6), rejected=(0, 0, 0, 0)),
+        ]
+    )
+    env = make_env(smoke_spec, target_coefficients=target_coefficients, backend=backend)
+    env.reset(seed=1)
+    context = env.current_episode_context()
+
+    first = env.evaluate_action_against_context(
+        context,
+        np.zeros(env.parameterization.action_dim, dtype=np.float32),
+    )
+    second = env.evaluate_action_against_context(
+        context,
+        np.full(env.parameterization.action_dim, 0.25, dtype=np.float32),
+    )
+
+    assert backend.track_calls == 3
+    assert first.info["linear_cost"] == 10.0
+    assert second.info["linear_cost"] == 10.0
+    assert first.info["bezier_cost"] == 5.0
+    assert second.info["bezier_cost"] == 6.0
+
+
 def test_step_with_valid_action_terminates_and_uses_cached_linear_cost(
     smoke_spec,
     target_coefficients,
