@@ -2,44 +2,44 @@
 
 ## 状態
 
-Accepted.
+Accepted．
 
 ## 背景
 
 Phase 3以降では，Python，Julia，HomotopyContinuation.jl，
 juliacallの互換性が実行環境に依存する．
 
-Codex CloudではJulia 1.5.2が使用され，
-Julia 1.11.1で生成された`julia/Manifest.toml`を読み込めなかった．
+Codexの実行環境ではJulia 1.5.2が使用され，
+Julia 1.11系で生成された`julia/Manifest.toml`を読み込めなかった．
 
-一方，本リポジトリの`docker/Dockerfile.sage-julia`は，
-Julia 1.11.1を使用する環境として構成されている．
+一方，プロジェクトのDockerコンテナ
+`homotopy-continuation`では，Julia 1.11.1，
+Python 3.10.12およびJulia depot `/opt/julia`を使用しており，
+PythonテストとJuliaテストの双方が成功している．
 
 ## 決定
 
-本プロジェクトの参照実行環境を，
-`docker/Dockerfile.sage-julia`から構築したDockerコンテナとする．
+本プロジェクトの正式な参照実行環境を，
+Dockerコンテナ`homotopy-continuation`とする．
 
 Phase 3以降のJulia単体テストおよびPython–Julia統合テストは，
-参照Dockerコンテナ内で実行する．
+このDockerコンテナ内で実行する．
 
-以下を参照環境の一部として扱う．
+Codexからは，`docker exec`を使用してコンテナ内のテストと
+実装確認を行う．
 
-- Julia 1.11.1
-- Python 3.10
-- Python仮想環境`/opt/pyenv`
-- Julia depot`/opt/julia`
-- リポジトリルート`/app`
-- `julia/Manifest.toml`に記録されたJulia依存関係
+## 理由
 
-Codex Cloudなど，参照Dockerと異なる環境での結果は補助的な確認とし，
-正式な受入テスト結果とはしない．
+- Python，JuliaおよびJuliaパッケージのバージョンを統一できる．
+- `julia/Manifest.toml`と実行時Juliaの不一致を防げる．
+- Python–Julia統合テストの再現性を確保できる．
+- Codexの実行環境に依存しない受入判定ができる．
 
 ## 影響
 
-- Julia依存関係の生成と更新は参照Docker内で行う．
+- Codex環境やホスト環境のみで実行したJuliaテストは，
+  正式な受入テストとして扱わない．
+- Julia依存関係の生成および更新は参照Docker内で行う．
 - `julia/Manifest.toml`を別のJuliaバージョンで更新しない．
-- CodexによるPhase 4以降の実装とテストは，原則として
-  参照Docker内で実行する．
 - Docker環境を変更する場合は，Dockerfile，Project.toml，
   Manifest.tomlおよび統合テストを同時に確認する．

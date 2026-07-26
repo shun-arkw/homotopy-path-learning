@@ -48,34 +48,37 @@ Do not skip tests only because the `python` command is unavailable. Use
 ## Reference Docker environment
 
 The authoritative execution environment is the Docker container named
-`hpl-dev`, built from `docker/Dockerfile.sage-julia`.
+`homotopy-continuation`.
 
-Inside the container:
+The container is built from the project Docker environment and currently uses:
 
 - Repository root: `/app`
-- Julia version: `1.11.1`
 - Python executable: `/opt/pyenv/bin/python3`
+- Julia version: `1.11.1`
 - Julia depot: `/opt/julia`
 
 All Julia tests and Python–Julia integration tests must be executed inside
 this container.
 
-From the host or a local Codex agent, use:
+Use the following command from the Codex or host environment:
 
 ```bash
-docker exec -T hpl-dev bash -lc '
+docker exec homotopy-continuation bash -lc '
 cd /app &&
 python3 -m pytest -q &&
 julia --startup-file=no --project=julia julia/test/runtests.jl
 '
 ```
 
-Do not use the host Julia installation as a substitute for the reference
-Docker environment.
+Do not use `docker exec -T` because the available Docker client does not
+support the `-T` option.
 
-If the Docker container cannot be accessed, stop and report that the reference
-tests were not executed. Do not treat tests from another Julia environment as
-the authoritative result.
+Do not use the host Julia installation or the Codex execution environment as
+a substitute for the reference Docker environment.
+
+If the container cannot be accessed，stop and report that the authoritative
+tests were not executed．Do not treat tests from another Julia environment as
+the authoritative result．
 
 ## Implementation scope
 
