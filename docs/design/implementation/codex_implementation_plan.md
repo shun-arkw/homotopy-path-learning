@@ -123,7 +123,30 @@ julia/test/
 - ベジェコストと報酬の計算
 - 診断用`info`
 
+初期環境は1エピソードにつき1回だけ`step()`を受け付ける．
+`reset()`では目的係数をサンプリングし，ゼロ行動から生成した線形補間制御点を同じJuliaバックエンドで追跡して，
+線形コスト`J_lin`をエピソード内へキャッシュする．
+
+観測は目的係数の自由係数のみを用いる．順序は`free_coefficient_mask`で抽出した複素係数に対し，
+`[Re(c_free), Im(c_free)]`の実数表現とし，dtypeは`float32`である．
+行動shapeは`((bezier_degree - 1) * latent_dim,)`であり，Gymnasium空間では`float32`，
+制御点生成時には`float64`へ変換する．
+
+パス単位コストは成功時
+`accepted_steps_l + reject_weight * rejected_steps_l`，
+失敗時`failure_penalty`とし，全パス平均を`J_lin`または`J_bez`とする．
+報酬は`reward_scale * (J_lin - J_bez)`であり，追加のclip，正規化，ボーナスは導入しない．
+数値的な追跡失敗は有限の失敗コストとして扱うが，Juliaランタイム障害，返却payload不正，
+shape不正，NaN/Infなどのプログラム上の例外は握りつぶさない．
+
 受入条件は，環境チェッカーに合格し，ランダム行動で100エピソード程度をクラッシュせず実行できることである．
+参照Docker内では次を実行する．
+
+```bash
+python3 -m pytest -q -m "not integration and not slow"
+python3 -m pytest -q -m "integration and not slow"
+python3 -m pytest -q -m "integration and slow"
+```
 
 ### Phase 6：PPOと実験CLI
 

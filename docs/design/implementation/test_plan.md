@@ -29,9 +29,18 @@
 ### Gym環境
 
 - 観測shapeが`observation_space`と一致する．
+- 初期観測は目的係数の自由係数を`[Re(c_free), Im(c_free)]`の順に並べた`float32`配列である．
 - 行動shapeが`action_space`と一致する．
+- 行動shapeは`((bezier_degree - 1) * latent_dim,)`であり，有限値かつ`action_space`の範囲内である．
 - 1ステップ後に終了する．
+- `reset()`時にゼロ行動の線形ベースラインを1回だけ追跡し，`step()`では再追跡しない．
+- ゼロ行動の制御点が線形補間制御点と一致し，報酬が数値誤差の範囲で0となる．
+- パス単位コストは成功時`accepted + reject_weight * rejected`，失敗時`failure_penalty`である．
+- 平均コスト`J_lin`および`J_bez`から`reward_scale * (J_lin - J_bez)`を計算する．
+- 数値的な追跡失敗は有限コストとして扱い，プログラム上の例外は握りつぶさない．
 - `info`に必須フィールドが含まれる．
+- Gymnasium checkerを`check_env(env, skip_render_check=True)`で実行する．
+- 実Juliaバックエンドでランダム行動100エピソードのsmoke testを実行する．
 
 ## 3．Julia単体テスト
 

@@ -881,6 +881,33 @@ $$
 ただし，先頭係数成分は常に固定されているため，
 学習入力ではこれらの固定成分を除いてもよい．
 
+初期の1ステップGymnasium環境では，固定成分を除いた自由係数のみを観測に用いる．
+`free_coefficient_mask`で抽出した
+
+$$
+\boldsymbol{c}_{F,\mathrm{free}}
+$$
+
+に対して，観測を
+
+$$
+\boldsymbol{s}
+=
+\begin{pmatrix}
+\operatorname{Re}\boldsymbol{c}_{F,\mathrm{free}}\\
+\operatorname{Im}\boldsymbol{c}_{F,\mathrm{free}}
+\end{pmatrix}
+$$
+
+とする．返却配列のdtypeは`float32`である．
+潜在行動のshapeは
+
+$$
+\left((d_b-1)m\right)
+$$
+
+であり，$m$は潜在次元である．
+
 複数回の行動により制御点を更新する場合は，時刻$\tau$における状態を
 
 $$
@@ -943,6 +970,13 @@ J_{\mathrm{lin},\ell}
 $$
 
 とする．
+
+初期環境では，線形ベースラインの制御点をゼロ潜在行動から生成し，
+`reset()`時に1回だけ追跡する．この結果から得た`J_lin`を同じエピソード内でキャッシュし，
+`step()`で計算した`J_bez`と比較する．
+追跡失敗は上式の`M_fail`によりパス単位で扱う．
+Juliaランタイム障害や不正な配列shape，NaN/Inf，返却payload不正は数学上の追跡失敗ではなく，
+実装上の例外として扱う．
 
 
 ## 14．報酬

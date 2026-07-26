@@ -21,6 +21,14 @@ integration = [
     "pytest>=8.0",
     "juliacall==0.9.31",
 ]
+env = [
+    "gymnasium>=1.0,<2.0",
+]
+phase5 = [
+    "pytest>=8.0",
+    "gymnasium>=1.0,<2.0",
+    "juliacall==0.9.31",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -30,4 +38,5 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "integration: requires the reference Julia runtime and Julia project",
+    "slow: long-running smoke or regression test",
 ]
