@@ -160,7 +160,37 @@ python3 -m pytest -q -m "integration and slow"
 - `analyze.py`
 - チェックポイントとメタデータ保存
 
+PPO実装は`BezierPhamEnv`を直接importしない環境非依存のPyTorch実装とする．
+初期Phase 6では単一のGymnasium環境を逐次的に使用し，`num_envs == 1`のみを許可する．
+行動分布は有界Box行動向けの`tanh`変換付き対角正規分布を用い，action clippingは使用しない．
+報酬clip，報酬正規化，観測正規化は導入しない．
+
+YAML設定は`experiment`，`system`，`sampler`，`path`，`tracker`，
+`environment`，`ppo`，`evaluation`，`output`のグループを持つ．
+未知キー，必須キー欠落，不正shape，不正batch設定は読込時に拒否する．
+
+出力は`outputs/<experiment-id>/<run-id>/`に保存し，少なくとも
+`config.yaml`，`metadata.json`，`latent_basis.npy`，`train_metrics.csv`，
+`evaluation_seeds.json`，`checkpoints/last.pt`，`checkpoints/best.pt`，
+`evaluation/evaluation.csv`，`benchmark/benchmark.csv`，
+`benchmark/benchmark_summary.csv`，`analysis/summary.md`を生成する．
+checkpointにはmodel/optimizer state，PPO設定，観測・行動shape，行動範囲，
+多項式系仕様，ベジェ次数，潜在次元，basis seed，Git commit，PyTorch version，
+format versionを含める．
+
+固定評価データは`evaluation.seed + instance_index`で生成したseed列として保存する．
+`evaluate.py`はLinearとLearnedBezierを，`benchmark.py`はLinear，RandomBezier，
+LearnedBezierを同じ目的係数で比較する．
+
 受入条件は，smoke設定で短時間学習が完了し，評価CSVと集計Markdownが生成されることである．
+smoke実行は次の4 CLIで行う．
+
+```bash
+python3 experiments/multivariate_pham/train.py --config experiments/multivariate_pham/configs/exp-0004-smoke.yaml --run-id <run-id> --device cpu
+python3 experiments/multivariate_pham/evaluate.py --run-dir outputs/EXP-0004/<run-id> --checkpoint outputs/EXP-0004/<run-id>/checkpoints/last.pt
+python3 experiments/multivariate_pham/benchmark.py --run-dir outputs/EXP-0004/<run-id> --checkpoint outputs/EXP-0004/<run-id>/checkpoints/last.pt
+python3 experiments/multivariate_pham/analyze.py --run-dir outputs/EXP-0004/<run-id>
+```
 
 ### Phase 7：性能改善
 

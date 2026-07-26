@@ -29,6 +29,17 @@ phase5 = [
     "gymnasium>=1.0,<2.0",
     "juliacall==0.9.31",
 ]
+rl = [
+    "torch==2.3.0+cu121",
+    "PyYAML>=5.4,<7.0",
+]
+phase6 = [
+    "pytest>=8.0",
+    "gymnasium>=1.0,<2.0",
+    "juliacall==0.9.31",
+    "torch==2.3.0+cu121",
+    "PyYAML>=5.4,<7.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -39,4 +50,5 @@ testpaths = ["tests"]
 markers = [
     "integration: requires the reference Julia runtime and Julia project",
     "slow: long-running smoke or regression test",
+    "phase6: PPO training and experiment pipeline tests",
 ]

@@ -11,7 +11,10 @@ dataset/
 data/
 my_idea/
 results/
+outputs/
 sandbox/
 runs/
 wandb/
 vizualization_for_powerpoint/
+.pytest_cache/
+*.pt

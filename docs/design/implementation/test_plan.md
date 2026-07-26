@@ -86,7 +86,20 @@ $t$方向の1階から必要階数までのTaylor係数を，有限差分また�
 - 同じ入力を複数回評価した結果が決定的である．
 - Juliaのウォームアップ前後で数値結果が変化しない．
 
-## 5．最初のテスト問題
+## 5．Phase 6 PPO・実験CLIテスト
+
+- YAML設定を厳密にdataclassへ読み込み，未知キー，必須キー欠落，不正型，不正batch設定を拒否する．
+- 有界行動分布が常にaction space内の行動を生成し，log probabilityを再計算できる．
+- action clipping，reward clipping，reward normalizationを使用しないことを確認する．
+- actor–critic networkの出力shape，state dict round-trip，決定論的行動再現性を確認する．
+- 1ステップterminal transitionのGAEを手計算と比較する．
+- PPO updateが有限のlossと診断値を返し，パラメータを更新する．
+- 偽の1ステップ連続行動環境でrollout収集とcheckpoint保存・読込を確認する．
+- 固定評価seedからLinear，RandomBezier，LearnedBezierを同じ目的係数で評価する．
+- 評価CSV，benchmark CSV，benchmark summary CSV，summary Markdownを生成する．
+- 参照Docker内の実`BezierPhamEnv`でPhase 6 CLI smokeを実行する．
+
+## 6．最初のテスト問題
 
 ### ケースA
 

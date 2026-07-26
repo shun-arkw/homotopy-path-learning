@@ -116,6 +116,36 @@ $$
 CSV，JSON，Markdown表を出力
 ```
 
+Phase 6の固定評価データは，目的係数そのものではなく
+`evaluation.seed + instance_index`で生成されるseed列として保存する．
+各seedについて，Linear，RandomBezier，LearnedBezierは同じ`env.reset(seed=...)`により
+同一目的係数を使用する．
+
+学習時のPPOは単一環境を逐次的に使用する．rolloutには観測，有界行動，pre-tanh行動，
+old log probability，報酬，terminated/truncated，value，環境診断情報を保存する．
+`terminated=True`ではGAEのbootstrapを停止する．
+行動は`tanh`変換付き対角正規分布から生成し，action clippingは使用しない．
+報酬clip，報酬正規化，観測正規化も使用しない．
+
+出力ディレクトリは次の構造である．
+
+```text
+outputs/EXP-0004/<run-id>/
+├── config.yaml
+├── metadata.json
+├── latent_basis.npy
+├── train_metrics.csv
+├── evaluation_seeds.json
+├── checkpoints/
+│   ├── last.pt
+│   ├── best.pt
+│   └── step_XXXXXXXX.pt
+├── evaluation/evaluation.csv
+├── benchmark/benchmark.csv
+├── benchmark/benchmark_summary.csv
+└── analysis/summary.md
+```
+
 ## 5．再現性情報
 
 各実験で，次を保存する．

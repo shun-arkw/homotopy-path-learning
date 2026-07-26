@@ -39,3 +39,26 @@ EXP-XXXX-name/
 - `notes.md`は，実行中の問題，修正，観察を時系列で記載する．
 
 新しい実験を開始する際は，`templates/experiment_record.md`をコピーして使用する．
+
+## EXP-0004
+
+Phase 6の短時間PPO smoke testは次で管理する．
+
+```text
+実行設定:
+experiments/multivariate_pham/configs/exp-0004-smoke.yaml
+
+実験CLI:
+experiments/multivariate_pham/train.py
+experiments/multivariate_pham/evaluate.py
+experiments/multivariate_pham/benchmark.py
+experiments/multivariate_pham/analyze.py
+
+実験記録:
+docs/experiments/EXP-0004-short-ppo-smoke/
+
+生成物:
+outputs/EXP-0004/<run-id>/
+```
+
+EXP-0004は学習パイプラインの接続確認であり，性能改善の結論を目的としない．

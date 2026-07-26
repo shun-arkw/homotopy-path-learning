@@ -392,6 +392,8 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
             "linear_accepted_steps": int(self._linear_result.accepted_steps),
             "linear_rejected_steps": int(self._linear_result.rejected_steps),
             "linear_per_path_costs": self._linear_cost.per_path.copy(),
+            "linear_residual_norms": self._linear_result.residual_norms.copy(),
+            "linear_failure_codes": tuple(self._linear_result.failure_codes),
         }
 
     def _step_info(

@@ -77,14 +77,22 @@ src/homotopy_path_learning/
 ├── envs/
 │   └── pham_env.py
 ├── rl/
-│   ├── ppo.py
+│   ├── distributions.py
 │   ├── networks.py
+│   ├── rollout.py
+│   ├── ppo.py
+│   ├── checkpoint.py
 │   └── train_utils.py
 └── evaluation/
     ├── datasets.py
     ├── metrics.py
-    └── evaluator.py
+    ├── evaluator.py
+    └── analyzer.py
 ```
+
+Phase 6では，`rl/`を環境非依存のPPO実装とし，Bezier/Pham固有の情報は
+`experiments/multivariate_pham/`のCLIまたは`evaluation/`で扱う．
+PPO本体には`linear_cost`，`bezier_cost`，多項式系仕様，Juliaバックエンドを埋め込まない．
 
 ## 3．`julia/`
 
