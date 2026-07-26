@@ -16,3 +16,4 @@
 - `ADR-0003-fixed-pham-support.md`
 - `ADR-0004-fixed-leading-coefficients.md`
 - `ADR-0005-first-order-taylor-tracking.md`
+- `ADR-0006-reference-docker-environment.md`
