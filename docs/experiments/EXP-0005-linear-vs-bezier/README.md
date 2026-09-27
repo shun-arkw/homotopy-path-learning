@@ -122,11 +122,17 @@ $$
 
 ### 集計（`outputs/EXP-0005/exp-0005-20260927T081612Z/benchmark/benchmark_summary.csv`）
 
-| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Mean improvement vs Linear | Positive improvement rate |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Linear | 1.00 | 30.765 | 28.125 | 10.688 | 20.00 | 77.50 | 0.000 | 0.00 |
-| Random Bézier | 1.00 | 41.995 | 40.375 | 10.752 | 26.00 | 76.25 | -11.230 | 0.10 |
-| Learned Bézier | 1.00 | 31.208 | 27.750 | 12.038 | 20.50 | 79.25 | -0.443 | 0.39 |
+| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Mean improvement vs Linear | Cost change vs Linear (%) | Positive improvement rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Linear | 1.00 | 30.765 | 28.125 | 10.688 | 20.00 | 77.50 | 0.000 | 0.00% | 0.00 |
+| Random Bézier | 1.00 | 41.995 | 40.375 | 10.752 | 26.00 | 76.25 | -11.230 | +36.51% | 0.10 |
+| Learned Bézier | 1.00 | 31.208 | 27.750 | 12.038 | 20.50 | 79.25 | -0.443 | +1.44% | 0.39 |
+
+「Mean improvement vs Linear」は`benchmark_summary.csv`の生データ
+（$J_{\mathrm{lin}}-J_{\mathrm{bez}}$，正の値＝改善）である。「Cost change vs
+Linear (%)」は本記録で追加した派生指標$(J_{\mathrm{method}}-J_{\mathrm{lin}})
+/J_{\mathrm{lin}}\times100\%$で，**負の値＝コスト減少（改善），正の値＝コスト
+増加（悪化）**という，通常の変化率と同じ符号規約である。
 
 ### 追跡失敗
 
@@ -194,3 +200,95 @@ Task 2.1の「線形パスより良いパスを学習できるか」という問
   確認する．
 - EXP-0006（ベジェ次数$d_b\in\{2,3,4\}$の比較）とEXP-0007（変数数・次数の拡大）
   を実施し，本結果が問題規模やベジェ次数に依存するかを確認する．
+
+## 16．追加実験（拡大スケール版）
+
+上記「15．次の実験」で挙げた2点（`total_timesteps`の拡大，`sampler.bound`の
+拡大）を反映し，同じ問題族で再実験した．過去の実験記録は上書きしない方針
+（`docs/README.md`）に従い，元の1〜15節の内容・結論はそのまま保持し，
+本節に追加結果として記載する．
+
+### 16.1．設定
+
+- 設定ファイル：`experiments/multivariate_pham/configs/exp-0005-linear-vs-bezier-scaled.yaml`
+- Run ID：`exp-0005-scaled-20260927T084722Z`
+- 出力先：`outputs/EXP-0005/exp-0005-scaled-20260927T084722Z/`
+- Git commit：6f5d64bdc812abb46265607969d61bb847822737
+- 実行環境：参照Docker`homotopy-continuation`（前節と同一）
+- 元の設定（15節以前，`exp-0005-linear-vs-bezier.yaml`）からの変更点：
+  - `ppo.total_timesteps`：100,000 → **500,000**
+  - `sampler.bound`：1.0 → **3.0**
+  - `ppo.checkpoint_interval`：12,500 → 25,000（100 updatesごと）
+  - `ppo.evaluation_interval_updates`：50 → 100
+  - `evaluation.seed`：30000 → 31000，`evaluation.random_action_seed`：40000 → 41000
+    （既存run とのseed範囲重複を避けるため）
+  - それ以外（degrees，free_exponents，bezier_degree=3，latent_dim=4，
+    action_limit=1.0，学習率やネットワーク構造などのPPOハイパーパラメータ，
+    tracker設定，`device: cpu`）は元のEXP-0005と同一．GPUは使用しなかった
+    （`ppo.num_envs`がPhase 6の制約で`1`固定であり，観測12次元・行動8次元の
+    小さいMLPに対してボトルネックはJulia側の逐次パス追跡であるため，GPU化の
+    効果は見込めないと判断した）．
+- 事前チェック：本実行前に，`bound\in\{1.0,2.0,3.0,5.0\}$それぞれで
+  目的系100件をサンプリングし，ゼロ行動（線形パス）の追跡成功率を確認した．
+  いずれも成功率100%（`bound=5.0`でも追跡失敗なし）であり，コスト平均は
+  `bound=1.0`の33.8から`bound=5.0`の43.1まで緩やかに増加するのみだった．
+  この結果から`bound=3.0`を採用した．
+- 学習時間：722.8秒（約12分），2,000 updates．
+
+### 16.2．結果（`benchmark_summary.csv`，評価100問題，`bound=3.0`）
+
+| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Mean improvement vs Linear | Cost change vs Linear (%) | Positive improvement rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Linear | 1.00 | 37.410 | 34.75 | 11.316 | 22.00 | 84.75 | 0.000 | 0.00% | 0.00 |
+| Random Bézier | 1.00 | 41.685 | 39.25 | 11.292 | 26.00 | 89.75 | -4.275 | +11.43% | 0.19 |
+| **Learned Bézier** | 1.00 | **35.553** | 33.25 | 10.202 | 22.25 | 63.00 | **+1.858** | **-4.97%** | **0.65** |
+
+追跡失敗は3手法とも0件だった（`path_success_rate = problem_success_rate = 1.0`）．
+「Cost change vs Linear (%)」の符号規約は10節の表と同じ（負＝改善）である。
+
+### 16.3．学習曲線（`train_metrics.csv`，2,000 updates）
+
+| update | global_step | rollout_cost_improvement_mean | actor_logstd_mean |
+|---:|---:|---:|---:|
+| 1 | 250 | -3.296 | -0.500 |
+| 201 | 50,250 | 0.991 | -0.794 |
+| 601 | 150,250 | 1.292 | -1.145 |
+| 1,201 | 300,250 | 2.103 | -1.541 |
+| 1,601 | 400,250 | 1.992 | -1.734 |
+| 2,000 | 500,000 | 1.256 | -1.894 |
+
+rolloutの平均コスト改善は，update=201（global_step=50,250）付近で早くも
+正に転じ，以降は概ね1.0〜2.1の範囲で推移した．`actor_logstd_mean`は
+2,000 updates時点でも単調減少を続けており，学習はまだ完全には収束して
+いないと見られる．
+
+### 16.4．観察と考察
+
+- 元のEXP-0005（`total_timesteps=100,000`，`bound=1.0`）では学習済み
+  ベジェパスが線形パスにわずかに劣ったが（平均改善-0.443，改善率39%），
+  拡大スケール版（`total_timesteps=500,000`，`bound=3.0`）では
+  **平均改善+1.858，改善率65%と，学習済みベジェパスが線形パスを明確に
+  上回った**．
+- この変化が「学習規模の拡大」と「`bound`拡大による問題の困難化」の
+  どちらに主に起因するかは，本実験だけでは切り分けられない
+  （2変数を同時に変更したため）．要因分離には，(a) `bound=1.0`のまま
+  `total_timesteps=500,000`のみ拡大した追加runと，(b) `total_timesteps=100,000`
+  のまま`bound=3.0`のみ変更した追加runを比較する必要がある．
+- `actor_logstd_mean`が2,000 updates時点でも減少を続けていることから，
+  さらに学習を延長すればもう一段の改善余地がある可能性がある．
+
+### 16.5．結論（拡大スケール版）
+
+`total_timesteps`と`sampler.bound`を拡大した設定では，Task 2.1の
+「線形パスより良いパスを学習できるか」という問いに対し，**肯定的な結果**が
+得られた（固定評価100問題で平均コスト-5.0%，改善率65%）．ただし，これは
+元のEXP-0005結論を覆すものではなく，**問題の困難度（`bound`）と学習規模の
+両方が，学習済みベジェパスが線形パスに勝てるかどうかに影響しうる**ことを
+示す追加的知見として記録する．
+
+### 16.6．次の実験（追加）
+
+- 要因分離のため，(a) `bound=1.0`かつ`total_timesteps=500,000`，
+  (b) `bound=3.0`かつ`total_timesteps=100,000`の2つの追加runを実施する．
+- `total_timesteps`をさらに拡大し（例：1,000,000），`actor_logstd_mean`が
+  収束するまで学習した場合に改善率がさらに上がるか確認する．
