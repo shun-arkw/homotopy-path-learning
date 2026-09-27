@@ -122,17 +122,17 @@ $$
 
 ### 集計（`outputs/EXP-0005/exp-0005-20260927T081612Z/benchmark/benchmark_summary.csv`）
 
-| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Mean improvement vs Linear | Cost change vs Linear (%) | Positive improvement rate |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Linear | 1.00 | 30.765 | 28.125 | 10.688 | 20.00 | 77.50 | 0.000 | 0.00% | 0.00 |
-| Random Bézier | 1.00 | 41.995 | 40.375 | 10.752 | 26.00 | 76.25 | -11.230 | +36.51% | 0.10 |
-| Learned Bézier | 1.00 | 31.208 | 27.750 | 12.038 | 20.50 | 79.25 | -0.443 | +1.44% | 0.39 |
+| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Cost change vs Linear (%) | Positive improvement rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Linear | 1.00 | 30.765 | 28.125 | 10.688 | 20.00 | 77.50 | 0.00% | 0.00 |
+| Random Bézier | 1.00 | 41.995 | 40.375 | 10.752 | 26.00 | 76.25 | +36.51% | 0.10 |
+| Learned Bézier | 1.00 | 31.208 | 27.750 | 12.038 | 20.50 | 79.25 | +1.44% | 0.39 |
 
-「Mean improvement vs Linear」は`benchmark_summary.csv`の生データ
-（$J_{\mathrm{lin}}-J_{\mathrm{bez}}$，正の値＝改善）である。「Cost change vs
-Linear (%)」は本記録で追加した派生指標$(J_{\mathrm{method}}-J_{\mathrm{lin}})
+「Cost change vs Linear (%)」は$(J_{\mathrm{method}}-J_{\mathrm{lin}})
 /J_{\mathrm{lin}}\times100\%$で，**負の値＝コスト減少（改善），正の値＝コスト
-増加（悪化）**という，通常の変化率と同じ符号規約である。
+増加（悪化）**という，通常の変化率と同じ符号規約である。`benchmark_summary.csv`
+の生データ列`mean_improvement_vs_linear`（$J_{\mathrm{lin}}-J_{\mathrm{bez}}$，
+符号が逆）から算出している。
 
 ### 追跡失敗
 
@@ -237,11 +237,11 @@ Task 2.1の「線形パスより良いパスを学習できるか」という問
 
 ### 16.2．結果（`benchmark_summary.csv`，評価100問題，`bound=3.0`）
 
-| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Mean improvement vs Linear | Cost change vs Linear (%) | Positive improvement rate |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Linear | 1.00 | 37.410 | 34.75 | 11.316 | 22.00 | 84.75 | 0.000 | 0.00% | 0.00 |
-| Random Bézier | 1.00 | 41.685 | 39.25 | 11.292 | 26.00 | 89.75 | -4.275 | +11.43% | 0.19 |
-| **Learned Bézier** | 1.00 | **35.553** | 33.25 | 10.202 | 22.25 | 63.00 | **+1.858** | **-4.97%** | **0.65** |
+| Method | Success rate | Mean cost | Median cost | Std (ddof=0) | Min | Max | Cost change vs Linear (%) | Positive improvement rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Linear | 1.00 | 37.410 | 34.75 | 11.316 | 22.00 | 84.75 | 0.00% | 0.00 |
+| Random Bézier | 1.00 | 41.685 | 39.25 | 11.292 | 26.00 | 89.75 | +11.43% | 0.19 |
+| **Learned Bézier** | 1.00 | **35.553** | 33.25 | 10.202 | 22.25 | 63.00 | **-4.97%** | **0.65** |
 
 追跡失敗は3手法とも0件だった（`path_success_rate = problem_success_rate = 1.0`）．
 「Cost change vs Linear (%)」の符号規約は10節の表と同じ（負＝改善）である。
@@ -265,9 +265,9 @@ rolloutの平均コスト改善は，update=201（global_step=50,250）付近で
 ### 16.4．観察と考察
 
 - 元のEXP-0005（`total_timesteps=100,000`，`bound=1.0`）では学習済み
-  ベジェパスが線形パスにわずかに劣ったが（平均改善-0.443，改善率39%），
+  ベジェパスが線形パスにわずかに劣ったが（コスト変化+1.44%，改善率39%），
   拡大スケール版（`total_timesteps=500,000`，`bound=3.0`）では
-  **平均改善+1.858，改善率65%と，学習済みベジェパスが線形パスを明確に
+  **コスト変化-4.97%，改善率65%と，学習済みベジェパスが線形パスを明確に
   上回った**．
 - この変化が「学習規模の拡大」と「`bound`拡大による問題の困難化」の
   どちらに主に起因するかは，本実験だけでは切り分けられない

@@ -48,11 +48,11 @@ $d_b=2,4$のseed1,2と$d_b=3$のseed1,2を追加する。
 
 ## 4．結果（`benchmark_summary.csv`，評価100問題，`bound=3.0`）
 
-| $d_b$ | 中間制御点数 | 行動次元 | Learned mean cost | Improvement vs Linear | Cost change (%) | Positive improvement rate | Random mean cost | Random cost change (%) |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 2 | 1 | 4 | 35.440 | +1.970 | **-5.27%** | 0.71 | 38.508 | +2.93% |
-| 3 | 2 | 8 | 35.553 | +1.858 | -4.97% | 0.65 | 41.685 | +11.43% |
-| 4 | 3 | 12 | 35.935 | +1.475 | -3.94% | 0.63 | 44.760 | +19.65% |
+| $d_b$ | 中間制御点数 | 行動次元 | Learned mean cost | Cost change (%) | Positive improvement rate | Random mean cost | Random cost change (%) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 1 | 4 | 35.440 | **-5.27%** | 0.71 | 38.508 | +2.93% |
+| 3 | 2 | 8 | 35.553 | -4.97% | 0.65 | 41.685 | +11.43% |
+| 4 | 3 | 12 | 35.935 | -3.94% | 0.63 | 44.760 | +19.65% |
 
 （Linear mean costは3設定共通で37.410。）追跡失敗は3設定・全手法で0件だった
 （`path_success_rate = problem_success_rate = 1.0`）。
