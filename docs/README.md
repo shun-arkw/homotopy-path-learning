@@ -9,8 +9,9 @@ docs/
 │   ├── architecture/
 │   ├── implementation/
 │   └── decisions/
-└── experiments/
-    └── templates/
+├── experiments/
+│   └── templates/
+└── references/
 ```
 
 ## `design/`
@@ -20,3 +21,7 @@ docs/
 ## `experiments/`
 
 実験ごとに新しいディレクトリを追加し，目的，仮説，設定，結果，考察，次の課題を記録する．過去の実験記録は原則として上書きしない．
+
+## `references/`
+
+設計仕様そのものではなく，設計の背景となった外部資料（ドラフトノート，申請書など）を保管する．未確定の検討事項や実装スコープ外の内容を含みうるため，仕様としては扱わない．内容が`design/`と食い違う場合は`design/`側を正とする．

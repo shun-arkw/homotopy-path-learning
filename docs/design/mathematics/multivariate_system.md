@@ -1058,3 +1058,11 @@ U\boldsymbol{z}_k
 $$
 
 である．ここで，$U$は先頭係数成分を変化させないように選ぶ．
+
+
+## 背景資料
+
+Pham系の定義・性質および強化学習によるホモトピーパス最適化の動機については，
+共同研究者による背景ドラフト
+[`docs/references/pham_systems_homotopy_rl_notes.pdf`](../../references/pham_systems_homotopy_rl_notes.pdf)
+を参照．本文書の仕様が優先する．

@@ -14,6 +14,11 @@ https://github.com/shun-arkw/homotopy-path-learning/tree/experiment/ai4math2026
 
 既存コードを直接大規模に書き換えるのではなく，再利用可能な処理を新構成へ移植する．一変数コードの動作を壊さない．
 
+Task 1（一変数）／Task 2（多変数Pham系・一般系）というフェーズ分けの背景には，
+共同研究者によるPHC Sakura申請書
+[`docs/references/phc_sakura_2027_proposal.pdf`](../../references/phc_sakura_2027_proposal.pdf)
+のロードマップがある．本文書の実装フェーズが優先する．
+
 ## 3．実装上の優先順位
 
 1．正しさ
