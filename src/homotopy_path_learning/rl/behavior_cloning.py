@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,7 +21,10 @@ class BehaviorCloningResult:
     ``history`` has one dict per epoch with keys ``epoch`` (1-based),
     ``train_loss`` and ``val_loss`` (MSE over all action coordinates).
     ``best_epoch`` is the 1-based epoch with the lowest validation loss; its
-    weights are restored into the agent.
+    weights are restored into the agent. ``n_augmentations`` is the number of
+    symmetry elements used for augmentation (0: none) and
+    ``clipped_label_fraction`` is the fraction of augmented label entries that
+    had to be clipped into the action bounds over the whole run.
     """
 
     history: list[dict[str, float]]
@@ -28,6 +32,8 @@ class BehaviorCloningResult:
     best_val_loss: float
     n_train: int
     n_val: int
+    n_augmentations: int = 0
+    clipped_label_fraction: float = 0.0
 
 
 def predicted_actions(agent: ActorCritic, observations: torch.Tensor) -> torch.Tensor:
@@ -61,6 +67,7 @@ def train_behavior_cloning(
     val_fraction: float,
     seed: int,
     device: str | torch.device = "cpu",
+    augmentations: Sequence[tuple[ArrayLike, ArrayLike]] | None = None,
 ) -> tuple[BehaviorCloningResult, torch.optim.Optimizer]:
     """Fit ``agent.actor_mean`` to oracle actions with an MSE loss.
 
@@ -71,6 +78,13 @@ def train_behavior_cloning(
     ``torch.Generator`` seeded by ``seed``. Only ``actor_mean`` parameters are
     optimized (Adam). The weights of the best validation epoch are restored at
     the end. Returns the result and the optimizer (for ``save_checkpoint``).
+
+    ``augmentations`` is an optional sequence of pairs ``(M_obs, M_act)`` with
+    shapes ``(obs_dim, obs_dim)`` and ``(action_dim, action_dim)`` (symmetry
+    group elements, identity included). Every training sample of every
+    minibatch draws an element independently (from the seeded torch generator)
+    and becomes ``obs' = M_obs @ obs``, ``act' = clip(M_act @ act, low, high)``.
+    Validation and the reported full train loss use the original data.
     """
 
     _positive("epochs", epochs, int)
@@ -105,6 +119,27 @@ def train_behavior_cloning(
     if n_val < 1 or n_train < 1:
         raise ValueError("val_fraction leaves an empty train or validation split.")
 
+    aug_obs = aug_act = None
+    if augmentations is not None:
+        if len(augmentations) == 0:
+            raise ValueError("augmentations must not be empty when given.")
+        obs_mats, act_mats = [], []
+        for index, (m_obs, m_act) in enumerate(augmentations):
+            m_obs = np.array(m_obs, dtype=np.float32, copy=True)
+            m_act = np.array(m_act, dtype=np.float32, copy=True)
+            if m_obs.shape != (obs_dim, obs_dim):
+                raise ValueError(f"augmentations[{index}] observation matrix must have shape ({obs_dim}, {obs_dim}), got {m_obs.shape}.")
+            if m_act.shape != (action_dim, action_dim):
+                raise ValueError(f"augmentations[{index}] action matrix must have shape ({action_dim}, {action_dim}), got {m_act.shape}.")
+            if not (np.all(np.isfinite(m_obs)) and np.all(np.isfinite(m_act))):
+                raise ValueError(f"augmentations[{index}] must be finite.")
+            obs_mats.append(m_obs)
+            act_mats.append(m_act)
+        aug_obs = torch.as_tensor(np.stack(obs_mats), device=device)
+        aug_act = torch.as_tensor(np.stack(act_mats), device=device)
+    n_clipped = 0
+    n_entries = 0
+
     order = np.random.default_rng(seed).permutation(n)
     train_idx, val_idx = order[:n_train], order[n_train:]
     obs_t = torch.as_tensor(obs, device=device)
@@ -128,7 +163,16 @@ def train_behavior_cloning(
         perm = torch.randperm(n_train, generator=generator)
         for start in range(0, n_train, int(batch_size)):
             idx = perm[start : start + int(batch_size)].to(train_obs.device)
-            loss = F.mse_loss(predicted_actions(agent, train_obs[idx]), train_act[idx])
+            batch_obs, batch_act = train_obs[idx], train_act[idx]
+            if aug_obs is not None:
+                choice = torch.randint(aug_obs.shape[0], (batch_obs.shape[0],), generator=generator).to(batch_obs.device)
+                batch_obs = torch.einsum("bij,bj->bi", aug_obs[choice], batch_obs)
+                raw = torch.einsum("bij,bj->bi", aug_act[choice], batch_act)
+                low_t, high_t = agent.distribution.low, agent.distribution.high
+                n_clipped += int(((raw < low_t - 1e-6) | (raw > high_t + 1e-6)).sum().item())
+                n_entries += int(raw.numel())
+                batch_act = torch.maximum(torch.minimum(raw, high_t), low_t)
+            loss = F.mse_loss(predicted_actions(agent, batch_obs), batch_act)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -148,6 +192,8 @@ def train_behavior_cloning(
         best_val_loss=best_val,
         n_train=n_train,
         n_val=n_val,
+        n_augmentations=0 if aug_obs is None else int(aug_obs.shape[0]),
+        clipped_label_fraction=float(n_clipped / n_entries) if n_entries else 0.0,
     )
     return result, optimizer
 

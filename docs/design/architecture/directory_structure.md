@@ -51,6 +51,7 @@ homotopy-path-learning/
 │   │   ├── oracle.py
 │   │   ├── behavior_cloning.py
 │   │   ├── oracle_modes.py
+│   │   ├── symmetry_check.py
 │   │   └── profile.py
 │   └── univariate/          （未作成．一変数実験は別ブランチ・タグで保存）
 │       └── README.md
@@ -73,7 +74,8 @@ src/homotopy_path_learning/
 │   ├── spec.py
 │   ├── pham.py
 │   ├── sampling.py
-│   └── start_solutions.py
+│   ├── start_solutions.py
+│   └── symmetry.py
 ├── paths/
 │   └── parameterization.py
 ├── backends/

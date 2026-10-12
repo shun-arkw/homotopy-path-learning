@@ -17,8 +17,11 @@ from homotopy_path_learning.evaluation.metrics import read_rows, write_rows
 from homotopy_path_learning.evaluation.oracle import (
     ORACLE_SUMMARY_FIELDS,
     learned_costs_from_evaluation,
+    resolve_latent_dim,
     summarize_oracle,
+    with_latent_dim,
 )
+from homotopy_path_learning.systems.symmetry import enumerate_symmetries, free_real_matrix, latent_action_matrix
 from homotopy_path_learning.rl.behavior_cloning import train_behavior_cloning
 from homotopy_path_learning.rl.checkpoint import save_checkpoint
 from homotopy_path_learning.rl.networks import ActorCritic
@@ -83,6 +86,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1.0e-3)
     parser.add_argument("--val-fraction", type=float, default=0.1)
+    parser.add_argument("--latent-dim", default=None, help="Integer or 'full'; default keeps the config.")
+    parser.add_argument("--augment-symmetry", action="store_true", help="Augment with the symmetry group (needs full latent space).")
     parser.add_argument("--num-train", type=int, default=None)
     parser.add_argument("--num-instances", type=int, default=None, help="Evaluation instances.")
     parser.add_argument("--seed", type=int, default=0)
@@ -96,6 +101,7 @@ def main() -> None:
 
     require_clean_git(allow_dirty=args.allow_dirty)
     base = load_config(args.config)
+    base = with_latent_dim(base, resolve_latent_dim(base, args.latent_dim))
     hidden_sizes = tuple(int(v) for v in args.hidden_sizes.split(",") if v.strip())
     config = replace(
         base,
@@ -136,6 +142,21 @@ def main() -> None:
             actor_logstd_init=config.ppo.actor_logstd_init,
             device=args.device,
         )
+        for label_dir in args.label_run_dir:
+            basis_path = Path(label_dir) / "latent_basis.npy"
+            if basis_path.is_file() and not np.allclose(np.load(basis_path), env.parameterization.basis, atol=1e-12):
+                raise ValueError(f"latent basis of label run {label_dir} differs from the environment basis.")
+        augmentations = None
+        if args.augment_symmetry:
+            spec = build_system_spec(config)
+            basis = env.parameterization.basis
+            augmentations = [
+                (
+                    free_real_matrix(spec, g).astype(np.float32),
+                    latent_action_matrix(spec, g, basis, config.path.bezier_degree).astype(np.float32),
+                )
+                for g in enumerate_symmetries(spec)
+            ]
         result, optimizer = train_behavior_cloning(
             agent,
             observations,
@@ -146,6 +167,7 @@ def main() -> None:
             val_fraction=args.val_fraction,
             seed=args.seed,
             device=args.device,
+            augmentations=augmentations,
         )
         write_rows(
             run_dir / "train_metrics.csv",
@@ -192,6 +214,10 @@ def main() -> None:
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_loss": result.best_val_loss,
+        "latent_dim": config.path.latent_dim,
+        "augment_symmetry": bool(args.augment_symmetry),
+        "n_symmetries": result.n_augmentations,
+        "clipped_label_fraction": result.clipped_label_fraction,
     }
     write_metadata(run_dir / "metadata.json", metadata)
 

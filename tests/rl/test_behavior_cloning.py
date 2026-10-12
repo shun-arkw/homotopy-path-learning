@@ -142,3 +142,71 @@ def test_checkpoint_round_trip(tmp_path):
     x = torch.as_tensor(obs)
     with torch.no_grad():
         assert torch.equal(predicted_actions(agent, x), predicted_actions(loaded, x))
+
+
+def equivariant_weights() -> np.ndarray:
+    """Weights ``(OBS_DIM, ACTION_DIM)`` commuting with the half-swap on obs and actions."""
+
+    rng = np.random.default_rng(123)
+    block = rng.normal(size=(OBS_DIM // 2, ACTION_DIM // 2)) * 0.5
+    other = rng.normal(size=(OBS_DIM // 2, ACTION_DIM // 2)) * 0.5
+    return np.block([[block, other], [other, block]])
+
+
+def equivariant_task(n: int = 120, seed: int = 0):
+    """Labels tanh(W obs) with W commuting with a coordinate swap + sign flip group."""
+
+    rng = np.random.default_rng(seed)
+    # Group on obs: identity and the map swapping the two halves of the observation.
+    half = OBS_DIM // 2
+    swap_obs = np.zeros((OBS_DIM, OBS_DIM), dtype=np.float32)
+    swap_obs[:half, half:] = np.eye(half)
+    swap_obs[half:, :half] = np.eye(half)
+    swap_act = np.zeros((ACTION_DIM, ACTION_DIM), dtype=np.float32)
+    swap_act[: ACTION_DIM // 2, ACTION_DIM // 2 :] = np.eye(ACTION_DIM // 2)
+    swap_act[ACTION_DIM // 2 :, : ACTION_DIM // 2] = np.eye(ACTION_DIM // 2)
+    w = equivariant_weights()
+    obs = rng.uniform(-1, 1, size=(n, OBS_DIM)).astype(np.float32)
+    act = np.tanh(obs @ w).astype(np.float32)
+    identity = (np.eye(OBS_DIM, dtype=np.float32), np.eye(ACTION_DIM, dtype=np.float32))
+    return obs, act, [identity, (swap_obs, swap_act)]
+
+
+def test_augmentation_runs_is_deterministic_and_evaluates_original_data():
+    obs, act, groups = equivariant_task()
+    # swap equivariance of the labels
+    # the labels are equivariant: label(M_obs obs) == M_act label(obs)
+    np.testing.assert_allclose(
+        np.tanh((obs @ groups[1][0].T) @ equivariant_weights()),
+        act @ groups[1][1].T,
+        atol=1e-6,
+    )
+    first_agent, second_agent = make_agent(), make_agent()
+    first, _ = run(first_agent, obs, act, epochs=5, augmentations=groups)
+    second, _ = run(second_agent, obs, act, epochs=5, augmentations=groups)
+    plain, _ = run(make_agent(), obs, act, epochs=5)
+
+    assert first.n_augmentations == 2
+    assert first.clipped_label_fraction == 0.0
+    assert first.history == second.history
+    assert first.history != plain.history
+    assert plain.n_augmentations == 0
+    x = torch.as_tensor(obs)
+    assert torch.equal(predicted_actions(first_agent, x), predicted_actions(second_agent, x))
+
+
+def test_augmentation_clips_labels_and_rejects_bad_shapes():
+    obs, act, groups = equivariant_task(60)
+    scale = (np.eye(OBS_DIM, dtype=np.float32), 3.0 * np.eye(ACTION_DIM, dtype=np.float32))
+    result, _ = run(make_agent(), obs, act, epochs=2, augmentations=[scale])
+    assert result.clipped_label_fraction > 0.0
+
+    identity_obs, identity_act = groups[0]
+    for bad in (
+        [(identity_obs[:5, :5], identity_act)],
+        [(identity_obs, identity_act[:3, :3])],
+        [(identity_obs, np.full_like(identity_act, np.nan))],
+        [],
+    ):
+        with pytest.raises(ValueError):
+            run(make_agent(), obs, act, epochs=1, augmentations=bad)

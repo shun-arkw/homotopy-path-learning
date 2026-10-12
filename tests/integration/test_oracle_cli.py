@@ -222,3 +222,64 @@ def test_behavior_cloning_constant_and_modes_cli(tmp_path) -> None:
     assert all(int(row["n_runs"]) == 2 for row in modes)
     assert (modes_dir / "modes_summary.csv").is_file()
     assert (modes_dir / "metadata.json").is_file()
+
+
+def test_full_latent_symmetry_bc_and_symmetry_check_cli(tmp_path) -> None:
+    output_root = tmp_path / "outputs"
+    labels = run_oracle_cli(
+        output_root, "labels-full", "--latent-dim", "full", "--evaluation-seed", "900000", "--num-instances", "4"
+    )
+    assert np.load(labels / "oracle_actions.npy").shape == (4, 24)
+    oracle_full = run_oracle_cli(output_root, "oracle-full", "--latent-dim", "full", "--num-instances", "2")
+
+    run_cli(
+        "behavior_cloning.py",
+        "--config",
+        CONFIG,
+        "--label-run-dir",
+        str(labels),
+        "--latent-dim",
+        "full",
+        "--augment-symmetry",
+        "--hidden-sizes",
+        "16,16",
+        "--epochs",
+        "2",
+        "--val-fraction",
+        "0.25",
+        "--num-instances",
+        "2",
+        "--experiment-id",
+        "EXP-TEST",
+        "--run-id",
+        "bc-sym",
+        "--oracle-run-dir",
+        str(oracle_full),
+        "--output-root",
+        str(output_root),
+        "--allow-dirty",
+    )
+    metadata = json.loads((output_root / "EXP-TEST" / "bc-sym" / "metadata.json").read_text(encoding="utf-8"))
+    bc = metadata["behavior_cloning"]
+    assert bc["augment_symmetry"] is True
+    assert bc["n_symmetries"] == 16
+    assert 0.0 <= bc["clipped_label_fraction"] <= 1.0
+
+    check_dir = tmp_path / "symcheck"
+    run_cli(
+        "symmetry_check.py",
+        "--config",
+        CONFIG,
+        "--num-instances",
+        "2",
+        "--random-actions",
+        "1",
+        "--output-dir",
+        str(check_dir),
+        "--allow-dirty",
+    )
+    rows = read_csv_rows(check_dir / "symmetry_check.csv")
+    assert len(rows) == 2 * 2 * 15
+    summary = {row["element_type"]: row for row in read_csv_rows(check_dir / "symmetry_summary.csv")}
+    assert int(summary["overall"]["n_pairs"]) == len(rows)
+    assert (check_dir / "metadata.json").is_file()

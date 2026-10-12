@@ -142,3 +142,22 @@ per-instance oracle actions as labels (behavior cloning), and adds diagnostics.
      --oracle-run-dir <oracle-seed0> --oracle-run-dir <oracle-seed1> \
      --tolerance 0.02 --output-dir outputs/EXP-0010/modes
    ```
+
+## Symmetry (EXP-0011)
+
+`symmetry_check.py` verifies numerically that the tracking cost of a Bezier
+path is invariant under the symmetry group of the Pham family (variable and
+equation permutations, roots of unity, conjugation; see
+`docs/design/mathematics/symmetry.md`). It tracks the original control points
+and every transformed copy for the zero action and random actions.
+
+```bash
+python3 experiments/multivariate_pham/symmetry_check.py --config <config.yaml> \
+  --num-instances 20 --random-actions 2 --output-dir outputs/EXP-0011/symmetry-check
+```
+
+`behavior_cloning.py --latent-dim full --augment-symmetry` trains on
+symmetry-transformed samples. It requires labels from per-instance oracle
+runs that used the full latent space (`oracle.py --latent-dim full`) and the
+same config, so that the latent basis agrees.
+
