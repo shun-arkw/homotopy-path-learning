@@ -10,6 +10,7 @@ EXP-0006-bezier-degree/
 EXP-0007-scale-separation/
 EXP-0009-oracle-headroom/
 EXP-0010-oracle-imitation/
+EXP-0011-symmetry/
 ```
 
 実験IDを主キーとし，日付は文書内に記載する．
@@ -168,4 +169,17 @@ oracleの最良行動を教師として方策ネットワークを教師あり�
            experiments/multivariate_pham/oracle_modes.py
 実験記録:  docs/experiments/EXP-0010-oracle-imitation/
 生成物:    outputs/EXP-0010/<run-id>/（実行スクリプトはoutputs/EXP-0010/scripts/）
+```
+
+### EXP-0011：対称性の検証と，対称性による拡張つきの教師あり学習
+
+Pham型系の対称性（変数・方程式の置換，1の冪根倍，複素共役）で追跡コストが不変かを数値で確かめる．そのうえで，全次元の行動空間で，対称性による教師データの拡張つきの教師あり学習を行う．
+
+```text
+実行設定:  EXP-0007の設定を読み込み，CLIでexperiment.idとpath.latent_dimを上書き
+実験CLI:   experiments/multivariate_pham/symmetry_check.py
+           experiments/multivariate_pham/oracle.py（--latent-dim full）
+           experiments/multivariate_pham/behavior_cloning.py（--augment-symmetry）
+実験記録:  docs/experiments/EXP-0011-symmetry/
+生成物:    outputs/EXP-0011/<run-id>/（実行スクリプトはoutputs/EXP-0011/scripts/）
 ```
