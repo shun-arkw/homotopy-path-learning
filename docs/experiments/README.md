@@ -51,6 +51,21 @@ EXP-XXXX-name/
 - **run-id**：`exp-XXXX-<variant>[-seedK]-<UTC時刻>`を推奨形式とする（例：`exp-0007-n2-d33-seed1-20260927T145848Z`）．再実行時も同じ形式を使い，`retry`などの接頭辞で区別しない（区別はUTC時刻で行う）．
 - **`outputs/`**：Git管理対象外とする．
 
+## 実験用の作業ツリー
+
+実験は，コミット済みのコードから起動する（各CLIは起動時に作業ツリーがクリーンかを検査し，`metadata.json`に`git_dirty`を記録する）．実験の実行中に記録を書くと作業ツリーがdirtyになるため，実験はメインの作業ツリーとは別の，実験専用の作業ツリーから起動する．
+
+```bash
+# ホスト側で作成する（git 2.34では相対パスのオプションがないため，リンクを手で相対パスに直す）
+git worktree add --detach .run-worktree <commit>
+echo ".run-worktree/" >> .git/info/exclude
+printf 'gitdir: ../.git/worktrees/-run-worktree\n' > .run-worktree/.git
+```
+
+- 起動は`/app/.run-worktree`で行い，`PYTHONPATH=/app/.run-worktree/src`として作業ツリー側のコードを使う．
+- 出力は`--output-root /app/outputs`で，従来どおりメインの`outputs/`に書き出す．
+- 新しいコミットで実験する場合は，作業ツリーのHEADを`git -C .run-worktree checkout --detach <commit>`で切り替える．
+
 ## 中断したrunの扱い
 
 コンテナ停止やプロセス停止などで中断したrunの出力は，次をすべて確認した後に削除する．
@@ -206,4 +221,43 @@ EXP-0011の拡張つき教師あり学習について，エポック数，ネッ
 実験CLI:   experiments/multivariate_pham/finetune.py
 実験記録:  docs/experiments/EXP-0013-cost-finetune/
 生成物:    outputs/EXP-0013/<run-id>/（実行スクリプトはoutputs/EXP-0013/scripts/）
+```
+
+### EXP-0014：規模拡大（n3-d333，n4-d2222）
+
+EXP-0010〜0013で整えた標準パイプライン（フル潜在oracleのラベル，対称性拡張つきの教師あり学習，追跡コストによる微調整）を，パス数の多い系（n3-d333）と変数数の多い系（n4-d2222）に適用する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0014-{n3-d333,n4-d2222}.yaml
+実験CLI:   experiments/multivariate_pham/oracle.py
+           experiments/multivariate_pham/behavior_cloning.py
+           experiments/multivariate_pham/finetune.py
+実験記録:  docs/experiments/EXP-0014-scale-up/
+生成物:    outputs/EXP-0014/<run-id>/（実行スクリプトはoutputs/EXP-0014/scripts/）
+```
+
+### EXP-0015：全次元の行動空間でのPPO（n3-d222）
+
+BCと微調整の優位が，全次元の行動空間を用いたことだけで説明できるかを確認するため，n3-d222でPPOを全次元の行動空間（$m=24$）で学習する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0015-n3-d222-full-seed{0,1,2}.yaml
+           （EXP-0007のn3-d222と潜在次元以外は同一）
+実験CLI:   experiments/multivariate_pham/train.py，evaluate.py
+実験記録:  docs/experiments/EXP-0015-ppo-full-latent/
+生成物:    outputs/EXP-0015/<run-id>/（実行スクリプトはoutputs/EXP-0015/scripts/）
+```
+
+### EXP-0016：ベジェ次数を変えた標準パイプライン（n3-d222）
+
+n3-d222で，ベジェ次数$d_b$を2と4にしたときのフル潜在oracleを調べ，$d_b=2$では標準パイプライン（ラベル，拡張つきBC，微調整）を実行して$d_b=3$と比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0016-n3-d222-db{2,4}.yaml
+           （EXP-0007のn3-d222とベジェ次数以外は同一）
+実験CLI:   experiments/multivariate_pham/oracle.py
+           experiments/multivariate_pham/behavior_cloning.py
+           experiments/multivariate_pham/finetune.py
+実験記録:  docs/experiments/EXP-0016-bezier-degree-pipeline/
+生成物:    outputs/EXP-0016/<run-id>/（実行スクリプトはoutputs/EXP-0016/scripts/）
 ```
