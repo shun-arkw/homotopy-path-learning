@@ -29,6 +29,27 @@ EXP-0012では，対称性拡張つきBCの到達率がn3-d222で約0.58（C2）
 
 ## 3．方法・設定
 
+### 多項式系
+
+**n3-d222**（$n=3$，次数$(2,2,2)$，$N_{\mathrm{path}}=8$，観測次元24）
+
+- 開始系 $G=\{g_1,g_2,g_3\}$：
+  $$g_1=x_1^2-1,\qquad g_2=x_2^2-1,\qquad g_3=x_3^2-1$$
+- 目的系 $F=\{f_1,f_2,f_3\}$：
+  $$f_1=x_1^2+a_{1,1}x_1+a_{1,2}x_2+a_{1,3}x_3+a_{1,4}$$
+  $$f_2=x_2^2+a_{2,1}x_1+a_{2,2}x_2+a_{2,3}x_3+a_{2,4}$$
+  $$f_3=x_3^2+a_{3,1}x_1+a_{3,2}x_2+a_{3,3}x_3+a_{3,4}$$
+
+**n2-d33**（$n=2$，次数$(3,3)$，$N_{\mathrm{path}}=9$，観測次元12）
+
+- 開始系 $G=\{g_1,g_2\}$：
+  $$g_1=x_1^3-1,\qquad g_2=x_2^3-1$$
+- 目的系 $F=\{f_1,f_2\}$：
+  $$f_1=x_1^3+a_{1,1}x_1+a_{1,2}x_2+a_{1,3}$$
+  $$f_2=x_2^3+a_{2,1}x_1+a_{2,2}x_2+a_{2,3}$$
+
+係数$a_{i,j}$は問題ごとに異なる．実部と虚部を，それぞれ$[-1,1]$の一様分布から独立に生成する（複素一様分布，$b=1.0$）．先頭係数は1に固定する．
+
 1ステップ問題なので，問題ごとにコスト比$r(\boldsymbol{a})=J(\boldsymbol{a})/J_{\mathrm{lin}}$の行動に関する勾配を，方策の平均$\boldsymbol{\mu}$まわりの対称な有限差分で推定する．$\boldsymbol{\varepsilon}_p\sim N(0,I)$，$\boldsymbol{a}^\pm_p=\mathrm{clip}(\boldsymbol{\mu}\pm\sigma\boldsymbol{\varepsilon}_p)$として，
 $$\hat{\boldsymbol{g}}=\frac{1}{2\sigma P}\sum_{p=1}^P\bigl(r(\boldsymbol{a}^+_p)-r(\boldsymbol{a}^-_p)\bigr)\boldsymbol{\varepsilon}_p$$
 とし，損失$\frac1B\sum_b\hat{\boldsymbol{g}}_b\cdot\boldsymbol{\mu}_\theta(\boldsymbol{s}_b)$（$\hat{\boldsymbol{g}}$は定数）を最小化する．`actor_mean`のみをAdamで更新する．BC項（$\lambda=$`--bc-weight`）を加える場合は，ラベルのミニバッチ（256件）に対称性拡張を施した二乗誤差を$\lambda$倍して加える．数学・実装の詳細は`docs/design/implementation/training_evaluation.md`にある．
