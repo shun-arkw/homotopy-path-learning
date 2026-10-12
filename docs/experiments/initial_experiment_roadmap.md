@@ -15,6 +15,7 @@
 | EXP-0009 | oracleによる改善余地の推定 | 完了（`EXP-0009-oracle-headroom/`）．本ロードマップ外で追加 |
 | EXP-0010 | oracleを教師とした教師あり学習と診断 | 完了（`EXP-0010-oracle-imitation/`）．本ロードマップ外で追加 |
 | EXP-0011 | 対称性の検証と，対称性による拡張つきの教師あり学習 | 完了（`EXP-0011-symmetry/`）．本ロードマップ外で追加 |
+| EXP-0012 | 拡張つき教師あり学習の飽和の確認 | 完了（`EXP-0012-bc-saturation/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 

@@ -11,6 +11,7 @@ EXP-0007-scale-separation/
 EXP-0009-oracle-headroom/
 EXP-0010-oracle-imitation/
 EXP-0011-symmetry/
+EXP-0012-bc-saturation/
 ```
 
 実験IDを主キーとし，日付は文書内に記載する．
@@ -182,4 +183,15 @@ Pham型系の対称性（変数・方程式の置換，1の冪根倍，複素共
            experiments/multivariate_pham/behavior_cloning.py（--augment-symmetry）
 実験記録:  docs/experiments/EXP-0011-symmetry/
 生成物:    outputs/EXP-0011/<run-id>/（実行スクリプトはoutputs/EXP-0011/scripts/）
+```
+
+### EXP-0012：拡張つき教師あり学習の飽和の確認
+
+EXP-0011の拡張つき教師あり学習について，エポック数，ネットワークの大きさ（幅・深さ），教師データ量を1要因ずつ変え，改善の余地を調べる．
+
+```text
+実行設定:  EXP-0007の設定を読み込み，CLIで上書き（ラベルはEXP-0011の全次元ラベルを再利用）
+実験CLI:   experiments/multivariate_pham/behavior_cloning.py
+実験記録:  docs/experiments/EXP-0012-bc-saturation/
+生成物:    outputs/EXP-0012/<run-id>/（実行スクリプトはoutputs/EXP-0012/scripts/）
 ```
