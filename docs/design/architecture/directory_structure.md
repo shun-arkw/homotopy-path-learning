@@ -16,9 +16,11 @@ homotopy-path-learning/
 │   │   ├── architecture/
 │   │   ├── implementation/
 │   │   └── decisions/
-│   └── experiments/
-│       ├── README.md
-│       └── templates/
+│   ├── experiments/
+│   │   ├── README.md
+│   │   └── templates/
+│   ├── references/
+│   └── reports/
 │
 ├── src/
 │   └── homotopy_path_learning/
@@ -29,6 +31,7 @@ homotopy-path-learning/
 │       ├── backends/
 │       ├── envs/
 │       ├── rl/
+│       ├── performance/
 │       └── evaluation/
 │
 ├── julia/
@@ -46,7 +49,7 @@ homotopy-path-learning/
 │   │   ├── benchmark.py
 │   │   ├── analyze.py
 │   │   └── profile.py
-│   └── univariate/
+│   └── univariate/          （未作成．一変数実験は別ブランチ・タグで保存）
 │       └── README.md
 │
 ├── tests/
@@ -69,14 +72,14 @@ src/homotopy_path_learning/
 │   ├── sampling.py
 │   └── start_solutions.py
 ├── paths/
-│   ├── bezier.py
-│   ├── linear.py
 │   └── parameterization.py
 ├── backends/
 │   ├── base.py
+│   ├── types.py
 │   └── julia.py
 ├── envs/
-│   └── pham_env.py
+│   ├── bezier_pham.py
+│   └── costs.py
 ├── rl/
 │   ├── distributions.py
 │   ├── networks.py
@@ -119,10 +122,12 @@ julia/
 │   └── api.jl
 └── test/
     ├── runtests.jl
+    ├── test_helpers.jl
     ├── test_system_spec.jl
     ├── test_bezier_homotopy.jl
     ├── test_jacobian.jl
     ├── test_taylor.jl
+    ├── test_start_solutions.jl
     └── test_tracking.jl
 ```
 
@@ -131,12 +136,14 @@ julia/
 `experiments/`には実行コードと設定ファイルを配置する．`docs/experiments/`には人間向けの実験記録を配置する．
 
 ```text
-experiments/multivariate_pham/configs/exp-0001.yaml
-docs/experiments/EXP-0001-n2-d2-smoke-test/README.md
-outputs/EXP-0001/
+experiments/multivariate_pham/configs/exp-XXXX-<variant>[-seedK].yaml
+docs/experiments/EXP-XXXX-<name>/README.md
+outputs/EXP-XXXX/<run-id>/
 ```
 
-上記3か所を同じ実験IDで対応付ける．
+上記3か所を同じ実験IDで対応付ける．1つの実験IDに複数の設定ファイルが
+あってよい．命名と`experiment.id`の確認手順の詳細は
+`docs/experiments/README.md`を参照．
 
 ## 5．一変数コードの扱い
 

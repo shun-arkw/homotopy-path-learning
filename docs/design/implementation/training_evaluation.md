@@ -109,18 +109,24 @@ output:
 
 ## 7．出力構成
 
+1回のrunの出力は`outputs/EXP-XXXX/<run-id>/`に次の構成で保存される
+（Phase 6実装時点．`docs/design/architecture/data_flow.md`と同じ）．
+
 ```text
-outputs/EXP-0001/
+outputs/EXP-XXXX/<run-id>/
 ├── config.yaml
 ├── metadata.json
+├── latent_basis.npy
+├── train_metrics.csv
+├── evaluation_seeds.json
 ├── checkpoints/
-├── logs/
-├── evaluation/
-│   ├── instances.npz
-│   ├── raw_results.csv
-│   ├── summary.json
-│   └── summary.md
-└── artifacts/
+│   ├── last.pt
+│   ├── best.pt
+│   └── step_XXXXXXXX.pt
+├── evaluation/evaluation.csv
+├── benchmark/benchmark.csv
+├── benchmark/benchmark_summary.csv
+└── analysis/summary.md
 ```
 
 `outputs/`は原則としてGit管理対象外とする．論文や報告に使用する小規模な集計結果だけを，必要に応じて別途管理する．
