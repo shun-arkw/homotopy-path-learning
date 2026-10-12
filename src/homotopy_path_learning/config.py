@@ -87,6 +87,23 @@ class PPOSettings:
     actor_logstd_init: float
     checkpoint_interval: int
     evaluation_interval_updates: int
+    # Optional keys (ADR-0007 stage 1); missing keys in YAML take these defaults.
+    actor_type: str = "mlp"
+    attention_d_model: int = 128
+    attention_heads: int = 4
+    attention_layers: int = 4
+    attention_ff_dim: int = 256
+
+    @property
+    def attention_kwargs(self) -> dict[str, int]:
+        """Keyword arguments of ``AttentionActor`` (``d_model``, ``n_heads``, ``n_layers``, ``ff_dim``)."""
+
+        return {
+            "d_model": self.attention_d_model,
+            "n_heads": self.attention_heads,
+            "n_layers": self.attention_layers,
+            "ff_dim": self.attention_ff_dim,
+        }
 
     @property
     def num_updates(self) -> int:
@@ -138,12 +155,18 @@ ROOT_KEYS = {
 }
 
 
-def _mapping(value: Any, *, name: str, keys: set[str]) -> dict[str, Any]:
+def _mapping(
+    value: Any,
+    *,
+    name: str,
+    keys: set[str],
+    optional: set[str] | None = None,
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConfigError(f"{name} must be a mapping.")
     actual = set(value)
     missing = keys - actual
-    extra = actual - keys
+    extra = actual - keys - (optional or set())
     if missing:
         raise ConfigError(f"{name} is missing required keys: {sorted(missing)}.")
     if extra:
@@ -304,6 +327,13 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
             "checkpoint_interval",
             "evaluation_interval_updates",
         },
+        optional={
+            "actor_type",
+            "attention_d_model",
+            "attention_heads",
+            "attention_layers",
+            "attention_ff_dim",
+        },
     )
     eval_raw = _mapping(
         root["evaluation"],
@@ -378,6 +408,15 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
     activation = _str(ppo_raw["activation"], name="ppo.activation", nonempty=True)
     if activation not in {"tanh", "relu"}:
         raise ConfigError("ppo.activation must be 'tanh' or 'relu'.")
+    actor_type = _str(ppo_raw.get("actor_type", "mlp"), name="ppo.actor_type", nonempty=True)
+    if actor_type not in {"mlp", "attention"}:
+        raise ConfigError("ppo.actor_type must be 'mlp' or 'attention'.")
+    attention_d_model = _int(ppo_raw.get("attention_d_model", 128), name="ppo.attention_d_model", positive=True)
+    attention_heads = _int(ppo_raw.get("attention_heads", 4), name="ppo.attention_heads", positive=True)
+    attention_layers = _int(ppo_raw.get("attention_layers", 4), name="ppo.attention_layers", positive=True)
+    attention_ff_dim = _int(ppo_raw.get("attention_ff_dim", 256), name="ppo.attention_ff_dim", positive=True)
+    if attention_d_model % attention_heads != 0:
+        raise ConfigError("ppo.attention_d_model must be divisible by ppo.attention_heads.")
     ppo = PPOSettings(
         num_envs=_int(ppo_raw["num_envs"], name="ppo.num_envs", positive=True),
         total_timesteps=_int(ppo_raw["total_timesteps"], name="ppo.total_timesteps", positive=True),
@@ -404,6 +443,11 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
             name="ppo.evaluation_interval_updates",
             positive=True,
         ),
+        actor_type=actor_type,
+        attention_d_model=attention_d_model,
+        attention_heads=attention_heads,
+        attention_layers=attention_layers,
+        attention_ff_dim=attention_ff_dim,
     )
     evaluation = EvaluationSettings(
         seed=_int(eval_raw["seed"], name="evaluation.seed"),

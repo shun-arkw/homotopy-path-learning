@@ -89,3 +89,41 @@ def test_supported_overrides_are_validated() -> None:
 
     with pytest.raises(ConfigError, match="divisible"):
         with_overrides(config, total_timesteps=65)
+
+
+def test_optional_actor_keys_default_and_validate() -> None:
+    config = load_config(SMOKE_CONFIG)
+    assert config.ppo.actor_type == "mlp"
+    assert config.ppo.attention_kwargs == {"d_model": 128, "n_heads": 4, "n_layers": 4, "ff_dim": 256}
+    data = config_to_dict(config)
+    assert data["ppo"]["actor_type"] == "mlp"
+    for key in ("actor_type", "attention_d_model", "attention_heads", "attention_layers", "attention_ff_dim"):
+        del data["ppo"][key]
+    assert parse_config_dict(data) == config  # old YAML without the keys parses to the defaults
+
+    data["ppo"]["actor_type"] = "attention"
+    data["ppo"]["attention_d_model"] = 64
+    assert parse_config_dict(data).ppo.attention_kwargs["d_model"] == 64
+    data["ppo"]["actor_type"] = "transformer"
+    with pytest.raises(ConfigError, match="actor_type"):
+        parse_config_dict(data)
+    data["ppo"]["actor_type"] = "attention"
+    data["ppo"]["attention_heads"] = 5
+    with pytest.raises(ConfigError, match="divisible"):
+        parse_config_dict(data)
+
+
+def test_all_existing_yaml_configs_still_parse() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    paths = sorted(Path("experiments/multivariate_pham/configs").glob("*.yaml"))
+    assert paths
+    parsed = 0
+    for path in paths:
+        if "performance" in yaml.safe_load(path.read_text(encoding="utf-8")):
+            continue  # Phase 7 performance config has its own loader
+        assert load_config(path).ppo.actor_type == "mlp"
+        parsed += 1
+    assert parsed > 30

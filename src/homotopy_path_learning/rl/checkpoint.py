@@ -35,6 +35,19 @@ def system_spec_to_dict(spec: PolynomialSystemSpec) -> dict[str, Any]:
     }
 
 
+def system_spec_from_dict(data: dict[str, Any]) -> PolynomialSystemSpec:
+    """Inverse of :func:`system_spec_to_dict`."""
+
+    return PolynomialSystemSpec(
+        n_vars=int(data["n_vars"]),
+        degrees=tuple(int(v) for v in data["degrees"]),
+        exponents=np.asarray(data["exponents"], dtype=np.int64),
+        offsets=np.asarray(data["offsets"], dtype=np.int64),
+        leading_indices=np.asarray(data["leading_indices"], dtype=np.int64),
+        constant_indices=np.asarray(data["constant_indices"], dtype=np.int64),
+    )
+
+
 def _as_tuple(value: Any) -> tuple[int, ...]:
     return tuple(int(v) for v in value)
 
@@ -65,6 +78,8 @@ def save_checkpoint(
         "global_step": int(global_step),
         "update": int(update),
         "ppo_config": config_to_dict(config)["ppo"],
+        "actor_type": str(getattr(agent, "actor_type", "mlp")),
+        "attention_kwargs": dict(getattr(agent, "attention_kwargs", {})),
         "config": config_to_dict(config),
         "observation_shape": tuple(int(v) for v in observation_shape),
         "action_shape": tuple(int(v) for v in action_space.shape),
@@ -130,9 +145,35 @@ def build_agent_from_checkpoint(
     action_space: gym.spaces.Box,
     device: torch.device | str,
 ) -> ActorCritic:
-    """Construct and load an ``ActorCritic`` from checkpoint metadata."""
+    """Construct and load an ``ActorCritic`` from checkpoint metadata.
+
+    The actor type is read from the explicit ``actor_type`` /
+    ``attention_kwargs`` keys (falling back to ``ppo_config``; checkpoints
+    without either are MLP). An attention actor is rebuilt from the saved
+    ``system_spec`` dictionary and ``bezier_degree``. Its latent basis ``U`` is
+    a persistent buffer (``actor_mean.basis``) of the state dict, so a
+    placeholder identity basis is used for construction and the real basis is
+    restored by ``load_state_dict``; no environment is needed.
+    """
 
     ppo = checkpoint["ppo_config"]
+    actor_type = str(checkpoint.get("actor_type", ppo.get("actor_type", "mlp")))
+    extra: dict[str, Any] = {}
+    if actor_type == "attention":
+        attention_kwargs = checkpoint.get("attention_kwargs") or {
+            "d_model": int(ppo.get("attention_d_model", 128)),
+            "n_heads": int(ppo.get("attention_heads", 4)),
+            "n_layers": int(ppo.get("attention_layers", 4)),
+            "ff_dim": int(ppo.get("attention_ff_dim", 256)),
+        }
+        spec = system_spec_from_dict(checkpoint["system_spec"])
+        extra = {
+            "actor_type": "attention",
+            "attention_kwargs": {k: int(v) for k, v in attention_kwargs.items()},
+            "system_spec": spec,
+            "basis": np.eye(2 * int(np.count_nonzero(spec.free_coefficient_mask))),
+            "bezier_degree": int(checkpoint["bezier_degree"]),
+        }
     agent = ActorCritic(
         observation_shape=_as_tuple(checkpoint["observation_shape"]),
         action_space=action_space,
@@ -140,6 +181,7 @@ def build_agent_from_checkpoint(
         activation=str(ppo["activation"]),
         actor_logstd_init=float(ppo["actor_logstd_init"]),
         device=device,
+        **extra,
     )
     agent.load_state_dict(checkpoint["model_state_dict"])
     agent.to(device)
@@ -153,6 +195,7 @@ __all__ = [
     "build_agent_from_checkpoint",
     "load_checkpoint",
     "save_checkpoint",
+    "system_spec_from_dict",
     "system_spec_to_dict",
     "validate_checkpoint",
 ]

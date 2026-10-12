@@ -182,3 +182,63 @@ Outputs: `finetune_metrics.csv`, `val_metrics.csv`, `checkpoints/last.pt`,
 `evaluation/evaluation.csv`, and `finetune_summary.csv` when `--oracle-run-dir`
 is given.
 
+## Attention Policy (ADR-0007 stage 1)
+
+`ppo.actor_type: attention` (optional YAML key, default `mlp`; further optional
+keys `attention_d_model`, `attention_heads`, `attention_layers`,
+`attention_ff_dim`) selects the permutation-equivariant Transformer actor of
+`docs/design/implementation/attention_policy.md`. It supports only supports
+whose free monomials are `{x_1, ..., x_n, 1}` and requires the full latent
+space (`--latent-dim full`). The critic stays an MLP.
+
+```bash
+python3 experiments/multivariate_pham/behavior_cloning.py --config <config.yaml> --latent-dim full \
+  --label-run-dir <labels> --actor-type attention --attention-d-model 128 --attention-heads 4 \
+  --attention-layers 4 --attention-ff-dim 256 --augment-symmetry --device cuda \
+  --experiment-id <EXP> --run-id <run-id>
+```
+
+`finetune.py` inherits the actor type and size from `--init-run-dir`.
+`--device cuda` runs the policy forward/backward on the GPU (tracking stays on
+the CPU); checkpoints load on any device. Checkpoints store `actor_type` and
+`attention_kwargs`; older checkpoints load as MLP.
+
+### Evaluating on a held-out set
+
+`evaluate.py --output-subdir NAME` writes `<run-dir>/NAME/evaluation.csv`
+instead of `evaluation/evaluation.csv`. A non-default subdirectory is never
+overwritten, and the evaluation is recorded in `metadata.json` under
+`extra_evaluations`.
+
+```bash
+python3 experiments/multivariate_pham/evaluate.py --run-dir <run> --checkpoint <run>/checkpoints/last.pt \
+  --evaluation-seed 41000 --num-instances 500 --output-subdir evaluation_test41000
+```
+
+### Comparing runs
+
+```bash
+python3 experiments/multivariate_pham/compare_runs.py --evaluation-subdir evaluation_test41000 \
+  --group mlp=<mlp-s0>,<mlp-s1>,<mlp-s2> --group attn=<a-s0>,<a-s1>,<a-s2> \
+  --oracle-run-dir <oracle-run> --pair mlp,attn --bootstrap 2000 --seed 0 --output-dir <out>
+```
+
+Runs must be evaluated on the same target seeds with identical Linear costs
+(checked, also against the oracle). Groups average the per-problem policy costs
+over their members. Outputs: `comparison_summary.csv` (Delta J, positive rate,
+captured fraction per run/group), `comparison_pairs.csv` (B - A with 95%
+paired percentile-bootstrap intervals over problems) and `metadata.json`.
+
+### Inference timing
+
+```bash
+OPENBLAS_NUM_THREADS=1 JULIA_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+python3 experiments/multivariate_pham/timing.py --config <config.yaml> --latent-dim full \
+  --run-dir <mlp-run> --run-dir <attention-run> --num-instances 100 --output-dir <out>
+```
+
+Run `timing.py` as a single process on an otherwise idle machine (no other
+experiment running). It reports per-problem median times over `--repeats`
+(`timing.csv`) and a summary with ratios to the linear path
+(`timing_summary.csv`).
+

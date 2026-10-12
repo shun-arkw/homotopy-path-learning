@@ -33,6 +33,25 @@ from homotopy_path_learning.rl.ppo import PPOMetrics, ppo_update
 from homotopy_path_learning.rl.rollout import RolloutBatch, collect_rollout
 
 
+def build_agent(config: Phase6Config, env, *, device: str | torch.device = "cpu") -> ActorCritic:
+    """Build an ``ActorCritic`` for a ``BezierPhamEnv`` ``env`` according to ``config.ppo`` (MLP or attention actor)."""
+
+    ppo = config.ppo
+    return ActorCritic(
+        observation_shape=tuple(env.observation_space.shape),
+        action_space=env.action_space,
+        hidden_sizes=ppo.hidden_sizes,
+        activation=ppo.activation,
+        actor_logstd_init=ppo.actor_logstd_init,
+        device=device,
+        actor_type=ppo.actor_type,
+        attention_kwargs=ppo.attention_kwargs if ppo.actor_type == "attention" else None,
+        system_spec=env.system_spec if ppo.actor_type == "attention" else None,
+        basis=env.parameterization.basis if ppo.actor_type == "attention" else None,
+        bezier_degree=config.path.bezier_degree if ppo.actor_type == "attention" else None,
+    )
+
+
 TRAIN_METRIC_FIELDS = [
     "update",
     "global_step",
@@ -350,14 +369,7 @@ def run_training(
         )
         write_metadata(metadata_path, metadata)
 
-        agent = ActorCritic(
-            observation_shape=tuple(env.observation_space.shape),
-            action_space=env.action_space,
-            hidden_sizes=config.ppo.hidden_sizes,
-            activation=config.ppo.activation,
-            actor_logstd_init=config.ppo.actor_logstd_init,
-            device=device_obj,
-        )
+        agent = build_agent(config, env, device=device_obj)
         optimizer = torch.optim.Adam(agent.parameters(), lr=config.ppo.learning_rate, eps=1e-5)
         logger = CSVLogger(run_dir / "train_metrics.csv", TRAIN_METRIC_FIELDS)
         observation, _ = env.reset(seed=config.experiment.seed)

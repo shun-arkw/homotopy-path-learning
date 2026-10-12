@@ -6,10 +6,13 @@ from collections.abc import Sequence
 
 import gymnasium as gym
 import numpy as np
+import numpy.typing as npt
 import torch
 from torch import nn
 
+from homotopy_path_learning.rl.attention import AttentionActor
 from homotopy_path_learning.rl.distributions import SquashedActionSample, TanhDiagNormal
+from homotopy_path_learning.systems.spec import PolynomialSystemSpec
 
 
 def layer_init(layer: nn.Linear, *, std: float = np.sqrt(2.0), bias_const: float = 0.0) -> nn.Linear:
@@ -50,7 +53,14 @@ def _mlp(
 
 
 class ActorCritic(nn.Module):
-    """Actor-critic network for one-dimensional Box observations and actions."""
+    """Actor-critic network for one-dimensional Box observations and actions.
+
+    ``actor_type='mlp'`` (default) builds the MLP actor. ``'attention'`` builds
+    an :class:`AttentionActor` (needs ``system_spec``, a square ``basis`` of
+    shape ``(2 D_free, 2 D_free)`` and ``bezier_degree``; ``attention_kwargs``
+    may contain ``d_model``, ``n_heads``, ``n_layers``, ``ff_dim``). The critic
+    is always an MLP.
+    """
 
     def __init__(
         self,
@@ -61,8 +71,15 @@ class ActorCritic(nn.Module):
         activation: str = "tanh",
         actor_logstd_init: float = -0.5,
         device: torch.device | str = "cpu",
+        actor_type: str = "mlp",
+        attention_kwargs: dict[str, int] | None = None,
+        system_spec: PolynomialSystemSpec | None = None,
+        basis: npt.ArrayLike | None = None,
+        bezier_degree: int | None = None,
     ) -> None:
         super().__init__()
+        if actor_type not in ("mlp", "attention"):
+            raise ValueError("actor_type must be 'mlp' or 'attention'.")
         if len(observation_shape) != 1:
             raise ValueError("observation_shape must be one-dimensional.")
         if not isinstance(action_space, gym.spaces.Box) or len(action_space.shape) != 1:
@@ -73,13 +90,26 @@ class ActorCritic(nn.Module):
             raise ValueError("observation and action dimensions must be positive.")
         self.observation_shape = tuple(int(v) for v in observation_shape)
         self.action_shape = tuple(int(v) for v in action_space.shape)
-        self.actor_mean = _mlp(
-            obs_dim,
-            hidden_sizes,
-            action_dim,
-            activation=activation,
-            output_std=0.01,
-        )
+        self.actor_type = actor_type
+        self.attention_kwargs = dict(attention_kwargs or {})
+        if actor_type == "mlp":
+            self.actor_mean: nn.Module = _mlp(
+                obs_dim,
+                hidden_sizes,
+                action_dim,
+                activation=activation,
+                output_std=0.01,
+            )
+        else:
+            if system_spec is None or basis is None or bezier_degree is None:
+                raise ValueError("actor_type='attention' requires system_spec, basis and bezier_degree.")
+            attention = AttentionActor(system_spec, basis, int(bezier_degree), **self.attention_kwargs)
+            if attention.action_dim != action_dim or 2 * attention.free_dim != obs_dim:
+                raise ValueError(
+                    f"attention actor expects observation/action dimensions ({2 * attention.free_dim}, "
+                    f"{attention.action_dim}); got ({obs_dim}, {action_dim})."
+                )
+            self.actor_mean = attention
         self.critic = _mlp(
             obs_dim,
             hidden_sizes,

@@ -53,6 +53,8 @@ homotopy-path-learning/
 │   │   ├── oracle_modes.py
 │   │   ├── symmetry_check.py
 │   │   ├── finetune.py
+│   │   ├── timing.py
+│   │   ├── compare_runs.py
 │   │   └── profile.py
 │   └── univariate/          （未作成．一変数実験は別ブランチ・タグで保存）
 │       └── README.md
@@ -89,6 +91,7 @@ src/homotopy_path_learning/
 ├── rl/
 │   ├── distributions.py
 │   ├── networks.py
+│   ├── attention.py
 │   ├── rollout.py
 │   ├── ppo.py
 │   ├── checkpoint.py
@@ -104,6 +107,7 @@ src/homotopy_path_learning/
     ├── metrics.py
     ├── evaluator.py
     ├── analyzer.py
+    ├── compare.py
     └── oracle.py
 ```
 

@@ -57,6 +57,12 @@ def _compatibility_key(config) -> dict:
     }
 
 
+def _attention_settings(checkpoint: dict) -> dict:
+    kwargs = checkpoint.get("attention_kwargs") or {}
+    names = {"d_model": "attention_d_model", "n_heads": "attention_heads", "n_layers": "attention_layers", "ff_dim": "attention_ff_dim"}
+    return {names[key]: int(value) for key, value in kwargs.items() if key in names}
+
+
 def _require_compatible(base, directory: Path) -> None:
     key = _compatibility_key(load_config(directory / "config.yaml"))
     for name, value in _compatibility_key(base).items():
@@ -128,6 +134,10 @@ def main() -> None:
             hidden_sizes=tuple(int(v) for v in ppo_ckpt["hidden_sizes"]),
             activation=str(ppo_ckpt["activation"]),
             actor_logstd_init=float(ppo_ckpt["actor_logstd_init"]),
+            # Actor type and attention size are inherited from the init checkpoint
+            # (checkpoints without these keys are MLP).
+            actor_type=str(checkpoint.get("actor_type", ppo_ckpt.get("actor_type", "mlp"))),
+            **_attention_settings(checkpoint),
         ),
         output=replace(base.output, root=args.output_root or base.output.root),
     )
@@ -278,6 +288,7 @@ def main() -> None:
         env.close()
     metadata["finetune"] = {
         "init_run_dir": args.init_run_dir,
+        "actor_type": config.ppo.actor_type,
         "latent_dim": config.path.latent_dim,
         "iterations": args.iterations,
         "batch_problems": args.batch_problems,

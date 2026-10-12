@@ -153,3 +153,7 @@ outputs/EXP-XXXX/<run-id>/
 ```
 
 `outputs/`は原則としてGit管理対象外とする．論文や報告に使用する小規模な集計結果だけを，必要に応じて別途管理する．
+
+## 8．attention方策
+
+線形項と定数項のみのサポートに対しては，`ppo.actor_type: attention`（任意の項目，既定は`mlp`）で置換同変なTransformerのactorを選べる．設計は`attention_policy.md`に従う．推論時間の計測は`experiments/multivariate_pham/timing.py`，複数runの比較は`compare_runs.py`で行う．

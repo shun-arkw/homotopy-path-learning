@@ -24,8 +24,8 @@ from homotopy_path_learning.evaluation.oracle import (
 from homotopy_path_learning.systems.symmetry import enumerate_symmetries, free_real_matrix, latent_action_matrix
 from homotopy_path_learning.rl.behavior_cloning import train_behavior_cloning
 from homotopy_path_learning.rl.checkpoint import save_checkpoint
-from homotopy_path_learning.rl.networks import ActorCritic
 from homotopy_path_learning.rl.train_utils import (
+    build_agent,
     collect_metadata,
     git_value,
     refresh_metadata_output_files,
@@ -82,6 +82,11 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--label-run-dir", action="append", required=True)
     parser.add_argument("--hidden-sizes", default="64,64")
+    parser.add_argument("--actor-type", choices=("mlp", "attention"), default="mlp")
+    parser.add_argument("--attention-d-model", type=int, default=128)
+    parser.add_argument("--attention-heads", type=int, default=4)
+    parser.add_argument("--attention-layers", type=int, default=4)
+    parser.add_argument("--attention-ff-dim", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1.0e-3)
@@ -106,7 +111,15 @@ def main() -> None:
     config = replace(
         base,
         experiment=replace(base.experiment, id=args.experiment_id, name=args.run_id, seed=args.seed),
-        ppo=replace(base.ppo, hidden_sizes=hidden_sizes),
+        ppo=replace(
+            base.ppo,
+            hidden_sizes=hidden_sizes,
+            actor_type=args.actor_type,
+            attention_d_model=args.attention_d_model,
+            attention_heads=args.attention_heads,
+            attention_layers=args.attention_layers,
+            attention_ff_dim=args.attention_ff_dim,
+        ),
         output=replace(base.output, root=args.output_root or base.output.root),
     )
     run_dir = Path(config.output.root) / config.experiment.id / args.run_id
@@ -134,14 +147,7 @@ def main() -> None:
                     f"stored observation of label {index} (target_seed={target_seeds[index]}) "
                     "does not match the environment observation."
                 )
-        agent = ActorCritic(
-            observation_shape=tuple(env.observation_space.shape),
-            action_space=env.action_space,
-            hidden_sizes=config.ppo.hidden_sizes,
-            activation=config.ppo.activation,
-            actor_logstd_init=config.ppo.actor_logstd_init,
-            device=args.device,
-        )
+        agent = build_agent(config, env, device=args.device)
         for label_dir in args.label_run_dir:
             basis_path = Path(label_dir) / "latent_basis.npy"
             if basis_path.is_file() and not np.allclose(np.load(basis_path), env.parameterization.basis, atol=1e-12):
@@ -207,6 +213,8 @@ def main() -> None:
         "n_train": result.n_train,
         "n_val": result.n_val,
         "hidden_sizes": list(hidden_sizes),
+        "actor_type": config.ppo.actor_type,
+        "attention": config.ppo.attention_kwargs if config.ppo.actor_type == "attention" else None,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
