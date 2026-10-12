@@ -8,6 +8,7 @@
 EXP-0005-linear-vs-bezier/
 EXP-0006-bezier-degree/
 EXP-0007-scale-separation/
+EXP-0009-oracle-headroom/
 ```
 
 実験IDを主キーとし，日付は文書内に記載する．
@@ -40,6 +41,8 @@ EXP-XXXX-name/
   ```bash
   grep -n "id: EXP" experiments/multivariate_pham/configs/exp-XXXX-*.yaml
   ```
+
+  例外として，`oracle.py`のように既存の設定を読み込み，`--experiment-id`で`experiment.id`を上書きするCLIがある．この場合は設定ファイルを新設せず，上書き後の設定を各runの`config.yaml`に保存し，実験記録に読み込んだ設定ファイルを明記する．
 
 - **run-id**：`exp-XXXX-<variant>[-seedK]-<UTC時刻>`を推奨形式とする（例：`exp-0007-n2-d33-seed1-20260927T145848Z`）．再実行時も同じ形式を使い，`retry`などの接頭辞で区別しない（区別はUTC時刻で行う）．
 - **`outputs/`**：Git管理対象外とする．
@@ -140,3 +143,15 @@ outputs/EXP-0008/<run-id>/
 
 EXP-0008は測定駆動の性能改善確認であり，小規模smoke系の結果から
 大規模問題全般の性能結論を出さない．
+
+### EXP-0009：oracleによる改善余地の推定
+
+方策を学習せず，評価問題ごとに潜在行動を直接最適化して，改善余地を推定する（n3-d222，n2-d33，n2-d33-dense）．PPOがその改善余地のうちどれだけを得ているか（到達率）を調べる．
+
+```text
+実行設定:  EXP-0007の設定を読み込み，experiment.idとpath.latent_dimをCLIで上書き
+           （上書き後の設定は各runのconfig.yamlに保存）
+実験CLI:   experiments/multivariate_pham/oracle.py
+実験記録:  docs/experiments/EXP-0009-oracle-headroom/
+生成物:    outputs/EXP-0009/<run-id>/
+```

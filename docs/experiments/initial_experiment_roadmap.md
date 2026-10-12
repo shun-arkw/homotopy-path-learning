@@ -12,6 +12,7 @@
 | EXP-0006 | ベジェ次数の比較 | 完了・第一段階（各1seed）（`EXP-0006-bezier-degree/`） |
 | EXP-0007 | 変数数または次数の拡大 | 完了（`EXP-0007-scale-separation/`）．当初計画より拡張 |
 | EXP-0008 | Phase 7性能測定 | 完了（`EXP-0008-phase7-performance/`）．本ロードマップ外で追加 |
+| EXP-0009 | oracleによる改善余地の推定 | 完了（`EXP-0009-oracle-headroom/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 

@@ -9,7 +9,8 @@ experiments/multivariate_pham/
 ├── train.py
 ├── evaluate.py
 ├── benchmark.py
-└── analyze.py
+├── analyze.py
+└── oracle.py
 ```
 
 再利用可能なPPO実装は`src/homotopy_path_learning/rl/`へ配置し，実験固有の設定読み込みと入出力だけを`experiments/`へ置く．
@@ -91,6 +92,8 @@ output:
 3．学習済み方策によるベジェパス
 
 必要に応じて，制御点を問題ごとに直接最適化したoracle的手法を追加し，方策の性能上限を調べる．
+
+oracleは`src/homotopy_path_learning/evaluation/oracle.py`（探索と集計）と`experiments/multivariate_pham/oracle.py`（CLI）で実装する．方策を学習せず，評価問題ごとに潜在行動の箱$[-a_{\max},a_{\max}]^{(d_b-1)m}$を直接探索する．探索は，ゼロ行動（線形パス），一様乱数サンプル，(1+1)進化戦略（1/5成功則）の順に行う．評価問題は学習済み方策の評価と同じ固定シードを用い，問題ごとに方策のコストと比較できるようにする．探索回数は有限なので，oracleの改善量は到達可能な改善の下界である．
 
 ## 6．評価指標
 

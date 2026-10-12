@@ -68,3 +68,30 @@ The profiler writes `performance.json`, `performance.csv`,
 `summary.md`. The optimized Phase 7 path reuses one linear tracking result per
 target seed during fixed evaluation; Tracker reuse, batch API, and threaded mode
 are not enabled by default.
+
+## Oracle Headroom (EXP-0009)
+
+`oracle.py` does not train a policy. For each fixed evaluation instance of a
+PPO config (`evaluation.seed + i`), it searches the latent action box directly
+(zero action, uniform random samples, then a (1+1) evolution strategy) and
+keeps the cheapest Bezier path found. The result estimates how much a policy
+could improve over the linear path at most. Because the search is finite, it
+is a lower bound on the attainable improvement, not the true optimum.
+
+```bash
+python3 experiments/multivariate_pham/oracle.py \
+  --config experiments/multivariate_pham/configs/exp-0007-n3-d222-seed0.yaml \
+  --experiment-id EXP-0009 \
+  --run-id "exp-0009-n3-d222-m4-seed0-$(date -u +%Y%m%dT%H%M%SZ)" \
+  --budget 500 --n-random 100 \
+  --compare-run-dir outputs/EXP-0007/exp-0007-n3-d222-seed0-20260927T145848Z
+```
+
+`--latent-dim full` uses a square basis (`m = 2 * n_free_coeffs`) that spans
+every real direction of the free coefficients. The run writes `config.yaml`
+(with `experiment.id` and `path.latent_dim` overridden), `oracle.csv`,
+`oracle_summary.csv`, `oracle_actions.npy`, `oracle_cost_traces.npy`,
+`latent_basis.npy`, and `metadata.json` to `outputs/<experiment-id>/<run-id>/`.
+Each `--compare-run-dir` adds a `LearnedBezier[<run>]` row to the summary.
+That run's `evaluation/evaluation.csv` must contain the same target seeds and
+the same linear costs.

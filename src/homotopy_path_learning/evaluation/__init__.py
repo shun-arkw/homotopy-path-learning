@@ -8,14 +8,17 @@ from homotopy_path_learning.evaluation.metrics import (
     SUMMARY_FIELDS,
     summarize_rows,
 )
+from homotopy_path_learning.evaluation.oracle import OracleSearchResult, search_best_action
 
 __all__ = [
     "EVALUATION_FIELDS",
+    "OracleSearchResult",
     "SUMMARY_FIELDS",
     "benchmark_checkpoint",
     "evaluate_checkpoint",
     "fixed_evaluation_seeds",
     "generate_summary_markdown",
     "save_evaluation_seeds",
+    "search_best_action",
     "summarize_rows",
 ]

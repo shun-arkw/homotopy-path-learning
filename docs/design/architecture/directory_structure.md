@@ -48,6 +48,7 @@ homotopy-path-learning/
 │   │   ├── evaluate.py
 │   │   ├── benchmark.py
 │   │   ├── analyze.py
+│   │   ├── oracle.py
 │   │   └── profile.py
 │   └── univariate/          （未作成．一変数実験は別ブランチ・タグで保存）
 │       └── README.md
@@ -95,7 +96,8 @@ src/homotopy_path_learning/
     ├── datasets.py
     ├── metrics.py
     ├── evaluator.py
-    └── analyzer.py
+    ├── analyzer.py
+    └── oracle.py
 ```
 
 Phase 6では，`rl/`を環境非依存のPPO実装とし，Bezier/Pham固有の情報は
