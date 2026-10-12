@@ -161,3 +161,24 @@ symmetry-transformed samples. It requires labels from per-instance oracle
 runs that used the full latent space (`oracle.py --latent-dim full`) and the
 same config, so that the latent basis agrees.
 
+## Cost Fine-Tuning (EXP-0013)
+
+`finetune.py` starts from a full-latent behavior-cloning run and minimizes the
+tracking cost directly. For each training problem it estimates the gradient of
+the cost ratio `J / J_lin` with respect to the action by antithetic finite
+differences around the policy mean and back-propagates it through
+`actor_mean`. An optional behavior-cloning term (`--bc-weight`,
+`--label-run-dir`, `--augment-symmetry`) regularizes towards oracle labels.
+The weights with the lowest validation `Delta J` (iteration 0 included) are
+kept. Inference is unchanged: one forward pass and one tracking.
+
+```bash
+python3 experiments/multivariate_pham/finetune.py --config <config.yaml> --latent-dim full \
+  --init-run-dir <bc-run> --iterations 2000 --batch-problems 32 --pairs 4 --sigma 0.1 \
+  --learning-rate 1e-4 --experiment-id EXP-0013 --run-id <run-id> --oracle-run-dir <oracle-full-run>
+```
+
+Outputs: `finetune_metrics.csv`, `val_metrics.csv`, `checkpoints/last.pt`,
+`evaluation/evaluation.csv`, and `finetune_summary.csv` when `--oracle-run-dir`
+is given.
+

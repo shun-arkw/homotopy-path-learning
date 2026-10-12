@@ -283,3 +283,84 @@ def test_full_latent_symmetry_bc_and_symmetry_check_cli(tmp_path) -> None:
     summary = {row["element_type"]: row for row in read_csv_rows(check_dir / "symmetry_summary.csv")}
     assert int(summary["overall"]["n_pairs"]) == len(rows)
     assert (check_dir / "metadata.json").is_file()
+
+
+def test_finetune_cli(tmp_path) -> None:
+    output_root = tmp_path / "outputs"
+    labels = run_oracle_cli(
+        output_root, "labels-ft", "--latent-dim", "full", "--evaluation-seed", "900000", "--num-instances", "4"
+    )
+    oracle_full = run_oracle_cli(output_root, "oracle-ft", "--latent-dim", "full", "--num-instances", "2")
+    run_cli(
+        "behavior_cloning.py",
+        "--config",
+        CONFIG,
+        "--label-run-dir",
+        str(labels),
+        "--latent-dim",
+        "full",
+        "--hidden-sizes",
+        "16,16",
+        "--epochs",
+        "2",
+        "--val-fraction",
+        "0.25",
+        "--num-instances",
+        "2",
+        "--experiment-id",
+        "EXP-TEST",
+        "--run-id",
+        "bc-init",
+        "--output-root",
+        str(output_root),
+        "--allow-dirty",
+    )
+    init_dir = output_root / "EXP-TEST" / "bc-init"
+    for run_id, extra in (
+        ("ft-plain", []),
+        ("ft-bc", ["--bc-weight", "1", "--label-run-dir", str(labels), "--augment-symmetry", "--bc-batch-size", "4"]),
+    ):
+        run_cli(
+            "finetune.py",
+            "--config",
+            CONFIG,
+            "--latent-dim",
+            "full",
+            "--init-run-dir",
+            str(init_dir),
+            "--iterations",
+            "3",
+            "--batch-problems",
+            "2",
+            "--pairs",
+            "1",
+            "--val-instances",
+            "2",
+            "--val-interval",
+            "1",
+            "--num-instances",
+            "2",
+            "--experiment-id",
+            "EXP-TEST",
+            "--run-id",
+            run_id,
+            "--oracle-run-dir",
+            str(oracle_full),
+            "--output-root",
+            str(output_root),
+            "--allow-dirty",
+            *extra,
+        )
+        run_dir = output_root / "EXP-TEST" / run_id
+        val = read_csv_rows(run_dir / "val_metrics.csv")
+        assert [int(row["iteration"]) for row in val] == [0, 1, 2, 3]
+        assert len(read_csv_rows(run_dir / "finetune_metrics.csv")) == 3
+        assert (run_dir / "checkpoints" / "last.pt").is_file()
+        assert [row["method"] for row in read_csv_rows(run_dir / "finetune_summary.csv")] == [
+            "Linear",
+            "Oracle",
+            "FineTuned",
+        ]
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        assert metadata["finetune"]["best_val_delta_j"] <= metadata["finetune"]["initial_val_delta_j"]
+        assert metadata["finetune"]["bc_weight"] == (1.0 if extra else 0.0)

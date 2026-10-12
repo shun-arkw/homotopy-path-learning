@@ -1,0 +1,329 @@
+from __future__ import annotations
+
+import argparse
+from copy import deepcopy
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+import time
+
+from _bootstrap import preload_julia
+
+preload_julia()
+
+import numpy as np
+import torch
+
+from homotopy_path_learning.config import build_env, build_system_spec, load_config, save_config
+from homotopy_path_learning.evaluation.evaluator import evaluate_checkpoint
+from homotopy_path_learning.evaluation.metrics import read_rows, write_rows
+from homotopy_path_learning.evaluation.oracle import (
+    ORACLE_SUMMARY_FIELDS,
+    learned_costs_from_evaluation,
+    resolve_latent_dim,
+    summarize_oracle,
+    with_latent_dim,
+)
+from homotopy_path_learning.rl.behavior_cloning import predicted_actions
+from homotopy_path_learning.rl.checkpoint import (
+    build_agent_from_checkpoint,
+    load_checkpoint,
+    save_checkpoint,
+    validate_checkpoint,
+)
+from homotopy_path_learning.rl.cost_finetune import antithetic_action_gradients, finetune_step
+from homotopy_path_learning.rl.train_utils import (
+    collect_metadata,
+    git_value,
+    refresh_metadata_output_files,
+    require_clean_git,
+    seed_everything,
+    write_metadata,
+)
+from homotopy_path_learning.systems.symmetry import enumerate_symmetries, free_real_matrix, latent_action_matrix
+
+
+def _compatibility_key(config) -> dict:
+    return {
+        "path.bezier_degree": config.path.bezier_degree,
+        "path.latent_dim": config.path.latent_dim,
+        "path.basis_seed": config.path.basis_seed,
+        "path.action_limit": config.path.action_limit,
+        "system.degrees": config.system.degrees,
+        "system.free_exponents": config.system.free_exponents,
+        "sampler.type": config.sampler.type,
+        "sampler.bound": config.sampler.bound,
+        "tracker": config.tracker,
+    }
+
+
+def _require_compatible(base, directory: Path) -> None:
+    key = _compatibility_key(load_config(directory / "config.yaml"))
+    for name, value in _compatibility_key(base).items():
+        if key[name] != value:
+            raise ValueError(f"run {directory} differs from the base config in {name}.")
+
+
+def load_labels(base, label_dirs: list[str]):
+    observations, actions = [], []
+    for label_dir in label_dirs:
+        directory = Path(label_dir)
+        for name in ("config.yaml", "oracle_observations.npy", "oracle_actions.npy"):
+            if not (directory / name).is_file():
+                raise FileNotFoundError(f"label run {directory} is missing {name}.")
+        _require_compatible(base, directory)
+        obs = np.load(directory / "oracle_observations.npy")
+        act = np.load(directory / "oracle_actions.npy")
+        if obs.shape[0] != act.shape[0]:
+            raise ValueError(f"label run {directory} has inconsistent lengths.")
+        observations.append(obs)
+        actions.append(act)
+    return np.concatenate(observations).astype(np.float32), np.concatenate(actions).astype(np.float32)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Fine-tune a BC policy by minimizing the tracking cost.")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--latent-dim", default=None, help="Integer or 'full'; default keeps the config.")
+    parser.add_argument("--init-run-dir", required=True, help="Behavior-cloning run providing checkpoints/last.pt.")
+    parser.add_argument("--iterations", type=int, default=2000)
+    parser.add_argument("--batch-problems", type=int, default=32)
+    parser.add_argument("--pairs", type=int, default=4)
+    parser.add_argument("--sigma", type=float, default=0.1)
+    parser.add_argument("--learning-rate", type=float, default=1.0e-4)
+    parser.add_argument("--bc-weight", type=float, default=0.0)
+    parser.add_argument("--label-run-dir", action="append", default=[])
+    parser.add_argument("--augment-symmetry", action="store_true", help="Symmetry augmentation of the BC term only.")
+    parser.add_argument("--bc-batch-size", type=int, default=256)
+    parser.add_argument("--train-seed", type=int, default=6000000)
+    parser.add_argument("--val-seed", type=int, default=5000000)
+    parser.add_argument("--val-instances", type=int, default=200)
+    parser.add_argument("--val-interval", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--experiment-id", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--oracle-run-dir", default=None)
+    parser.add_argument("--num-instances", type=int, default=None, help="Evaluation instances.")
+    parser.add_argument("--output-root", default=None)
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--allow-dirty", action="store_true")
+    args = parser.parse_args()
+
+    if args.bc_weight > 0 and not args.label_run_dir:
+        parser.error("--label-run-dir is required when --bc-weight > 0.")
+    if min(args.iterations, args.batch_problems, args.pairs, args.val_instances, args.val_interval, args.bc_batch_size) <= 0:
+        parser.error("iteration, batch, pair, validation and interval counts must be positive.")
+    require_clean_git(allow_dirty=args.allow_dirty)
+    base = load_config(args.config)
+    base = with_latent_dim(base, resolve_latent_dim(base, args.latent_dim))
+    init_dir = Path(args.init_run_dir)
+    _require_compatible(base, init_dir)
+    checkpoint = load_checkpoint(init_dir / "checkpoints" / "last.pt", map_location=args.device)
+    ppo_ckpt = checkpoint["ppo_config"]
+    config = replace(
+        base,
+        experiment=replace(base.experiment, id=args.experiment_id, name=args.run_id, seed=args.seed),
+        ppo=replace(
+            base.ppo,
+            hidden_sizes=tuple(int(v) for v in ppo_ckpt["hidden_sizes"]),
+            activation=str(ppo_ckpt["activation"]),
+            actor_logstd_init=float(ppo_ckpt["actor_logstd_init"]),
+        ),
+        output=replace(base.output, root=args.output_root or base.output.root),
+    )
+    run_dir = Path(config.output.root) / config.experiment.id / args.run_id
+    if run_dir.exists():
+        raise FileExistsError(f"run directory already exists: {run_dir}")
+    labels = None
+    if args.bc_weight > 0:
+        labels = load_labels(base, args.label_run_dir)
+    run_dir.mkdir(parents=True)
+    start_time = datetime.now(timezone.utc).isoformat()
+    seed_everything(args.seed)
+    rng = np.random.default_rng([args.seed, 17])
+    generator = torch.Generator().manual_seed(int(args.seed))
+
+    env = build_env(config)
+    try:
+        spec = build_system_spec(config)
+        validate_checkpoint(
+            checkpoint,
+            config=config,
+            system_spec=spec,
+            observation_shape=tuple(env.observation_space.shape),
+            action_space=env.action_space,
+        )
+        agent = build_agent_from_checkpoint(checkpoint, action_space=env.action_space, device=args.device)
+        agent.train()
+        optimizer = torch.optim.Adam(agent.actor_mean.parameters(), lr=args.learning_rate)
+        low = agent.distribution.low.detach().cpu().numpy().astype(np.float64)
+        high = agent.distribution.high.detach().cpu().numpy().astype(np.float64)
+
+        augmentations = None
+        if args.augment_symmetry:
+            basis = env.parameterization.basis
+            augmentations = [
+                (
+                    free_real_matrix(spec, g).astype(np.float32),
+                    latent_action_matrix(spec, g, basis, config.path.bezier_degree).astype(np.float32),
+                )
+                for g in enumerate_symmetries(spec)
+            ]
+
+        def policy_actions(observations: np.ndarray) -> np.ndarray:
+            with torch.no_grad():
+                return predicted_actions(agent, torch.as_tensor(observations, dtype=torch.float32, device=args.device)).cpu().numpy().astype(np.float64)
+
+        val_contexts, val_obs = [], []
+        for i in range(args.val_instances):
+            observation, _ = env.reset(seed=args.val_seed + i)
+            val_contexts.append(env.current_episode_context())
+            val_obs.append(np.asarray(observation, dtype=np.float32))
+        val_obs_array = np.stack(val_obs)
+        val_linear = np.array([float(c.linear_cost.mean) for c in val_contexts])
+
+        def validate() -> tuple[float, float]:
+            actions = policy_actions(val_obs_array)
+            costs = np.array(
+                [float(env.evaluate_action_against_context(c, a).tracking_cost.mean) for c, a in zip(val_contexts, actions)]
+            )
+            return (float(costs.mean()) - float(val_linear.mean())) / float(val_linear.mean()) * 100.0, float(np.mean(costs < val_linear))
+
+        val_rows = []
+        initial_delta, positive = validate()
+        val_rows.append({"iteration": 0, "val_delta_j": initial_delta, "val_positive_rate": positive})
+        best_delta, best_iteration = initial_delta, 0
+        best_state = deepcopy(agent.actor_mean.state_dict())
+        metrics_rows = []
+        timer = time.time()
+        for iteration in range(1, args.iterations + 1):
+            contexts, observations = [], []
+            for b in range(args.batch_problems):
+                observation, _ = env.reset(seed=args.train_seed + (iteration - 1) * args.batch_problems + b)
+                contexts.append(env.current_episode_context())
+                observations.append(np.asarray(observation, dtype=np.float32))
+            observations = np.stack(observations)
+            means = policy_actions(observations)
+
+            def cost_fn(b: int, action: np.ndarray) -> float:
+                return float(env.evaluate_action_against_context(contexts[b], action).tracking_cost.mean) / float(
+                    contexts[b].linear_cost.mean
+                )
+
+            gradients, info = antithetic_action_gradients(
+                cost_fn, means, sigma=args.sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
+            )
+            bc_kwargs = {}
+            if labels is not None:
+                pick = rng.integers(0, labels[0].shape[0], size=args.bc_batch_size)
+                bc_kwargs = dict(
+                    bc_observations=labels[0][pick],
+                    bc_actions=labels[1][pick],
+                    bc_weight=args.bc_weight,
+                    augmentations=augmentations,
+                    generator=generator,
+                )
+            losses = finetune_step(agent, observations, gradients, optimizer, **bc_kwargs)
+            metrics_rows.append(
+                {
+                    "iteration": iteration,
+                    "mean_cost_ratio": info["mean_cost_ratio"],
+                    "mean_grad_norm": info["mean_grad_norm"],
+                    "surrogate_loss": losses["surrogate_loss"],
+                    "bc_loss": losses["bc_loss"],
+                    "elapsed": time.time() - timer,
+                }
+            )
+            if iteration % args.val_interval == 0 or iteration == args.iterations:
+                delta, positive = validate()
+                val_rows.append({"iteration": iteration, "val_delta_j": delta, "val_positive_rate": positive})
+                if delta < best_delta:
+                    best_delta, best_iteration = delta, iteration
+                    best_state = deepcopy(agent.actor_mean.state_dict())
+        agent.actor_mean.load_state_dict(best_state)
+        agent.eval()
+
+        write_rows(
+            run_dir / "finetune_metrics.csv",
+            metrics_rows,
+            fieldnames=["iteration", "mean_cost_ratio", "mean_grad_norm", "surrogate_loss", "bc_loss", "elapsed"],
+        )
+        write_rows(run_dir / "val_metrics.csv", val_rows, fieldnames=["iteration", "val_delta_j", "val_positive_rate"])
+        save_checkpoint(
+            run_dir / "checkpoints" / "last.pt",
+            agent=agent,
+            optimizer=optimizer,
+            config=config,
+            system_spec=spec,
+            global_step=0,
+            update=0,
+            observation_shape=tuple(env.observation_space.shape),
+            action_space=env.action_space,
+            experiment_id=config.experiment.id,
+            run_id=args.run_id,
+            git_commit=git_value(["rev-parse", "HEAD"]),
+        )
+        save_config(config, run_dir / "config.yaml")
+        metadata = collect_metadata(
+            config=config,
+            run_id=args.run_id,
+            run_dir=run_dir,
+            status="Completed",
+            start_time_utc=start_time,
+            end_time_utc=datetime.now(timezone.utc).isoformat(),
+            config_path=args.config,
+            env=env,
+        )
+    finally:
+        env.close()
+    metadata["finetune"] = {
+        "init_run_dir": args.init_run_dir,
+        "latent_dim": config.path.latent_dim,
+        "iterations": args.iterations,
+        "batch_problems": args.batch_problems,
+        "pairs": args.pairs,
+        "sigma": args.sigma,
+        "learning_rate": args.learning_rate,
+        "bc_weight": args.bc_weight,
+        "label_run_dirs": list(args.label_run_dir),
+        "augment_symmetry": bool(args.augment_symmetry),
+        "bc_batch_size": args.bc_batch_size,
+        "train_seed": args.train_seed,
+        "val_seed": args.val_seed,
+        "val_instances": args.val_instances,
+        "val_interval": args.val_interval,
+        "seed": args.seed,
+        "best_iteration": best_iteration,
+        "best_val_delta_j": best_delta,
+        "initial_val_delta_j": initial_delta,
+    }
+    write_metadata(run_dir / "metadata.json", metadata)
+
+    eval_rows = evaluate_checkpoint(
+        config=config,
+        run_id=args.run_id,
+        checkpoint_path=run_dir / "checkpoints" / "last.pt",
+        output_path=run_dir / "evaluation" / "evaluation.csv",
+        num_instances=args.num_instances,
+        device=args.device,
+    )
+    summaries = []
+    if args.oracle_run_dir is not None:
+        oracle_rows = read_rows(Path(args.oracle_run_dir) / "oracle.csv")
+        learned = learned_costs_from_evaluation(eval_rows, oracle_rows)
+        summaries = summarize_oracle(oracle_rows, {"FineTuned": learned}, label_format="{label}")
+        write_rows(run_dir / "finetune_summary.csv", summaries, fieldnames=ORACLE_SUMMARY_FIELDS)
+    refresh_metadata_output_files(run_dir)
+
+    print(f"val_delta_j: initial={initial_delta:+.2f}% best={best_delta:+.2f}% (iteration {best_iteration})")
+    for summary in summaries:
+        print(
+            f"{summary['method']}: mean_cost={summary['mean_cost']:.4f} "
+            f"delta_j={summary['delta_j_percent']:+.2f}% positive_rate={summary['positive_rate']:.2f} "
+            f"captured={summary['captured_fraction']}"
+        )
+    print(f"RUN_DIR={run_dir}")
+
+
+if __name__ == "__main__":
+    main()

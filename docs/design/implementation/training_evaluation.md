@@ -13,10 +13,13 @@ experiments/multivariate_pham/
 ├── oracle.py
 ├── behavior_cloning.py
 ├── oracle_modes.py
-└── symmetry_check.py
+├── symmetry_check.py
+└── finetune.py
 ```
 
 `behavior_cloning.py`はoracleの行動を教師とする教師あり学習のCLI，`oracle_modes.py`は探索シードの異なるoracle実行間で最良行動の多峰性を調べるCLIである．`symmetry_check.py`は，Pham型系族の対称性のもとで追跡コストが不変かを数値的に確認するCLIである（数学は`docs/design/mathematics/symmetry.md`）．
+
+`finetune.py`はBCで得た方策を，追跡コストの直接最小化で微調整するCLIである（`src/homotopy_path_learning/rl/cost_finetune.py`）．
 
 再利用可能なPPO実装は`src/homotopy_path_learning/rl/`へ配置し，実験固有の設定読み込みと入出力だけを`experiments/`へ置く．
 
@@ -105,6 +108,10 @@ oracleは`src/homotopy_path_learning/evaluation/oracle.py`（探索と集計）�
 - 定数行動ベースライン：全問題に共通の1つの潜在行動を，訓練問題（評価問題とは別のシード）の平均コストを最小化するように上記と同じ探索で求める．`experiments/multivariate_pham/oracle.py --mode constant`で実装し，評価問題上のコストを`ConstantBezier`として報告する．問題ごとの適応が必要かどうかを切り分けるために用いる．
 - oracleを教師とした教師あり学習（behavior cloning）：別シードの問題に対するoracleの観測と最良行動の組を教師データとし，`ActorCritic.actor_mean`を$\tanh$で有界化した出力との二乗誤差で学習する（`src/homotopy_path_learning/rl/behavior_cloning.py`，CLIは`experiments/multivariate_pham/behavior_cloning.py`）．検証損失が最小のエポックの重みを採用し，通常のチェックポイントとして保存するので，既存の評価コードでそのまま評価できる．
   - 対称性による拡張（`--augment-symmetry`）：訓練ミニバッチの各標本に，群の元$g$を独立に一様抽出して，観測を$R_g\boldsymbol{o}$，行動を$\mathrm{clip}(U^\top R_gU\boldsymbol{a})$へ変換する．検証損失と報告する訓練損失は元のデータで計算する．行動の変換は潜在空間が群の作用で閉じていることを要するため，`--latent-dim full`（$m=2D$）が必須である．クリップされたラベル要素の割合を`metadata.json`に記録する．
+
+- コストによる微調整（fine-tuning）：BCで得た方策（フル潜在，対称性拡張つき）の`actor_mean`を，追跡コストを直接最小化して更新する．1ステップ問題なので，問題ごとに行動$\boldsymbol{a}$に対するコスト比$r(\boldsymbol{a})=J(\boldsymbol{a})/J_{\mathrm{lin}}$の勾配を，方策の平均$\boldsymbol{\mu}$まわりの対称な（antithetic）有限差分で推定する．$\boldsymbol{\varepsilon}_p\sim N(0,I)$，$\boldsymbol{a}^\pm_p=\mathrm{clip}(\boldsymbol{\mu}\pm\sigma\boldsymbol{\varepsilon}_p)$として，
+  $$\hat{\boldsymbol{g}}=\frac{1}{2\sigma P}\sum_{p=1}^P\bigl(r(\boldsymbol{a}^+_p)-r(\boldsymbol{a}^-_p)\bigr)\boldsymbol{\varepsilon}_p$$
+  とし，損失$L=\frac1B\sum_b\hat{\boldsymbol{g}}_b\cdot\boldsymbol{\mu}_\theta(\boldsymbol{s}_b)$（$\hat{\boldsymbol{g}}$は定数）を最小化する．ラベルがある場合は，`bc_weight`を掛けたBCの二乗誤差（`--augment-symmetry`で対称性拡張）を加えられる．モデル選択は，訓練とは別シードの検証問題での$\Delta J$（決定的方策）が最小の反復の重みを採用する（反復0を含む）．訓練問題は反復ごとに新しいシードで生成する．推論時の動作は変わらない．
 
 推論時の制約として，学習済み方策を用いる手法では推論時は方策の順伝播1回と追跡1回のみとし，問題ごとの探索や追加の追跡を行わない．oracleは性能上限を測るための参照であり，この制約を満たさない．
 

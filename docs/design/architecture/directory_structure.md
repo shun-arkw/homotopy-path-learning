@@ -52,6 +52,7 @@ homotopy-path-learning/
 │   │   ├── behavior_cloning.py
 │   │   ├── oracle_modes.py
 │   │   ├── symmetry_check.py
+│   │   ├── finetune.py
 │   │   └── profile.py
 │   └── univariate/          （未作成．一変数実験は別ブランチ・タグで保存）
 │       └── README.md
@@ -92,6 +93,7 @@ src/homotopy_path_learning/
 │   ├── ppo.py
 │   ├── checkpoint.py
 │   ├── behavior_cloning.py
+│   ├── cost_finetune.py
 │   └── train_utils.py
 ├── performance/
 │   ├── timing.py
