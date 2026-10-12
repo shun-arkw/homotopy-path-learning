@@ -17,3 +17,4 @@
 - `ADR-0004-fixed-leading-coefficients.md`
 - `ADR-0005-first-order-taylor-tracking.md`
 - `ADR-0006-reference-docker-environment.md`
+- `ADR-0007-coefficient-token-attention.md`（Proposed）
