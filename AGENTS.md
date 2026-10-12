@@ -73,6 +73,44 @@ julia --startup-file=no --project=julia julia/test/runtests.jl
 Do not use `docker exec -T` because the available Docker client does not
 support the `-T` option.
 
+### Starting the container
+
+Start the container inside a `tmux` session:
+
+```bash
+tmux
+bash sh/docker.sh shell
+```
+
+`sh/docker.sh shell` runs `docker run --rm -it ... /bin/bash`, so the
+container lives only as long as the shell that started it. If that shell
+dies (for example, because the SSH connection drops), the container stops and
+is removed, and every job running inside it is killed. Running it inside
+`tmux` keeps the shell alive across SSH disconnects.
+
+A newly created container does not keep packages installed in a previous
+container. After (re)creating it, install the package again before running
+tests or experiments:
+
+```bash
+docker exec homotopy-continuation bash -lc 'cd /app && python3 -m pip install -e ".[test]"'
+```
+
+### Running several jobs in parallel
+
+When running more than one Julia-backed process at the same time (for
+example, several training runs), always set:
+
+```bash
+docker exec -e OPENBLAS_NUM_THREADS=1 -e JULIA_NUM_THREADS=1 -e OMP_NUM_THREADS=1 \
+  homotopy-continuation bash -lc '...'
+```
+
+Without these, each process starts many OpenBLAS threads, and the processes
+oversubscribe the CPU cores (an observed slowdown of about 12x with six
+processes). The Jacobians in this project are tiny (2x2 to 3x3), so
+multi-threaded BLAS gives no benefit.
+
 Do not use the host Julia installation or the Codex execution environment as
 a substitute for the reference Docker environment.
 
