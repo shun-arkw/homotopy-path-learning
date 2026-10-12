@@ -12,6 +12,7 @@ EXP-0009-oracle-headroom/
 EXP-0010-oracle-imitation/
 EXP-0011-symmetry/
 EXP-0012-bc-saturation/
+EXP-0013-cost-finetune/
 ```
 
 実験IDを主キーとし，日付は文書内に記載する．
@@ -194,4 +195,15 @@ EXP-0011の拡張つき教師あり学習について，エポック数，ネッ
 実験CLI:   experiments/multivariate_pham/behavior_cloning.py
 実験記録:  docs/experiments/EXP-0012-bc-saturation/
 生成物:    outputs/EXP-0012/<run-id>/（実行スクリプトはoutputs/EXP-0012/scripts/）
+```
+
+### EXP-0013：追跡コストを直接使った微調整
+
+拡張つき教師あり学習の方策を初期値に，同じ問題で対になる摂動の追跡コストから勾配を推定し，方策を微調整する．モデル選択は検証用問題の追跡コストで行う．
+
+```text
+実行設定:  EXP-0007の設定を読み込み，CLIで上書き（初期方策はEXP-0012のrun）
+実験CLI:   experiments/multivariate_pham/finetune.py
+実験記録:  docs/experiments/EXP-0013-cost-finetune/
+生成物:    outputs/EXP-0013/<run-id>/（実行スクリプトはoutputs/EXP-0013/scripts/）
 ```
