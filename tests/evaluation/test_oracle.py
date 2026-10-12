@@ -145,10 +145,12 @@ def test_search_rejects_non_finite_objective():
 
 
 from homotopy_path_learning.backends.types import TrackerConfig, TrackingResult
-from homotopy_path_learning.config import load_config
+from homotopy_path_learning.config import build_env, load_config
 from homotopy_path_learning.evaluation.oracle import (
     ORACLE_FIELDS,
     learned_costs_from_evaluation,
+    near_best_action_stats,
+    search_constant_action,
     resolve_latent_dim,
     run_oracle,
     summarize_oracle,
@@ -306,3 +308,102 @@ def test_learned_costs_reject_mismatched_instances():
         learned_costs_from_evaluation(evaluation_rows([(1, 100.0, 95.0)]), rows)
     with pytest.raises(ValueError, match="Linear cost mismatch"):
         learned_costs_from_evaluation(evaluation_rows([(0, 101.0, 95.0)]), rows)
+
+
+def test_run_oracle_stores_observations_and_honours_evaluation_seed():
+    config = load_config(SMOKE_CONFIG)
+
+    result = run_oracle(
+        config, budget=5, n_random=2, search_seed=0, num_instances=2, evaluation_seed=777, backend=DeviationBackend()
+    )
+
+    assert [row["target_seed"] for row in result.rows] == [777, 778]
+    assert result.observations.shape == (2, 12)
+    assert result.observations.dtype == np.float32
+    env = build_env(config, backend=DeviationBackend())
+    try:
+        for row, stored in zip(result.rows, result.observations):
+            observation, _ = env.reset(seed=row["target_seed"])
+            np.testing.assert_array_equal(observation, stored)
+    finally:
+        env.close()
+
+
+def test_learned_costs_method_kwarg_and_label_format():
+    rows = [oracle_row(0, 100.0, 80.0)]
+    evaluation = [
+        {"target_seed": "0", "method": "Linear", "mean_cost": "100.0", "problem_success": "1"},
+        {"target_seed": "0", "method": "ConstantBezier", "mean_cost": "90.0", "problem_success": "1"},
+    ]
+
+    with pytest.raises(ValueError, match="target_seed=0"):
+        learned_costs_from_evaluation(evaluation, rows)
+    learned = learned_costs_from_evaluation(evaluation, rows, method="ConstantBezier")
+    assert learned == ([90.0], [1])
+    summary = summarize_oracle(rows, {"ConstantBezier": learned}, label_format="{label}")
+    assert [item["method"] for item in summary] == ["Linear", "Oracle", "ConstantBezier"]
+    assert summary[2]["delta_j_percent"] == pytest.approx(-10.0)
+
+
+def test_search_constant_action_improves_and_is_reproducible():
+    config = load_config(SMOKE_CONFIG)
+    kwargs = dict(train_seed=500, num_train=3, budget=60, n_random=20, search_seed=1)
+
+    first = search_constant_action(config, backend=DeviationBackend(), **kwargs)
+    second = search_constant_action(config, backend=DeviationBackend(), **kwargs)
+
+    assert first.action.shape == (8,)
+    assert first.action.dtype == np.float64
+    assert first.train_seeds == [500, 501, 502]
+    assert first.costs.shape == (60,)
+    assert first.train_linear_mean_cost == 110.0
+    assert first.costs[0] == 110.0
+    assert first.train_mean_cost <= first.train_linear_mean_cost
+    assert first.train_mean_cost < 110.0
+    np.testing.assert_array_equal(first.action, second.action)
+    np.testing.assert_array_equal(first.costs, second.costs)
+
+
+def test_near_best_action_stats():
+    costs = [100.0, 101.0, 150.0]
+    actions = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]]
+
+    stats = near_best_action_stats(costs, actions, tolerance=0.02)
+
+    assert stats["n_runs"] == 3
+    assert stats["n_good"] == 2
+    assert stats["best_cost_spread_percent"] == pytest.approx(50.0)
+    assert stats["mean_pairwise_cosine"] == pytest.approx(0.0)
+    assert stats["mean_pairwise_distance"] == pytest.approx(np.sqrt(2.0))
+
+    wide = near_best_action_stats(costs, actions, tolerance=1.0)
+    assert wide["n_good"] == 3
+    assert wide["mean_pairwise_cosine"] == pytest.approx((0.0 + (-1.0) + 0.0) / 3.0)
+
+
+def test_near_best_action_stats_zero_vector_and_single_good():
+    stats = near_best_action_stats([1.0, 1.0], [[0.0, 0.0], [1.0, 0.0]], tolerance=0.0)
+    assert stats["mean_pairwise_cosine"] == 0.0
+    assert stats["mean_pairwise_distance"] == pytest.approx(1.0)
+
+    single = near_best_action_stats([1.0, 2.0], [[1.0], [1.0]], tolerance=0.1)
+    assert single["n_good"] == 1
+    assert np.isnan(single["mean_pairwise_cosine"])
+    assert np.isnan(single["mean_pairwise_distance"])
+
+
+@pytest.mark.parametrize(
+    ("costs", "actions", "tolerance"),
+    [
+        ([[1.0]], [[1.0]], 0.1),
+        ([1.0, 2.0], [[1.0]], 0.1),
+        ([1.0, 2.0], [1.0, 2.0], 0.1),
+        ([1.0, float("nan")], [[1.0], [1.0]], 0.1),
+        ([1.0, 2.0], [[1.0], [float("inf")]], 0.1),
+        ([1.0, 2.0], [[1.0], [1.0]], -0.1),
+        ([1.0, 2.0], [[1.0], [1.0]], float("nan")),
+    ],
+)
+def test_near_best_action_stats_rejects_invalid_inputs(costs, actions, tolerance):
+    with pytest.raises(ValueError):
+        near_best_action_stats(costs, actions, tolerance=tolerance)

@@ -95,3 +95,50 @@ every real direction of the free coefficients. The run writes `config.yaml`
 Each `--compare-run-dir` adds a `LearnedBezier[<run>]` row to the summary.
 That run's `evaluation/evaluation.csv` must contain the same target seeds and
 the same linear costs.
+
+## Learning from Oracle Labels (EXP-0010)
+
+EXP-0010 trains a policy that needs one forward pass at inference time, using
+per-instance oracle actions as labels (behavior cloning), and adds diagnostics.
+
+1. Generate labels on training instances disjoint from the evaluation seeds.
+   `--evaluation-seed` replaces `evaluation.seed` as the base of the instance
+   seeds; the run also stores `oracle_observations.npy` (`(N, obs_dim)`).
+
+   ```bash
+   python3 experiments/multivariate_pham/oracle.py --config <config.yaml> \
+     --experiment-id EXP-0010 --run-id labels-a --evaluation-seed 900000 \
+     --num-instances 1000 --budget 500 --n-random 100
+   ```
+
+2. Constant-action baseline: search one action shared by all problems on
+   training targets `train-seed + i`, then evaluate it on the evaluation
+   instances (reported as `ConstantBezier`). `--oracle-run-dir` adds a
+   comparison summary (`constant_summary.csv`) against a per-instance oracle run.
+
+   ```bash
+   python3 experiments/multivariate_pham/oracle.py --config <config.yaml> --mode constant \
+     --experiment-id EXP-0010 --run-id constant --train-seed 900000 --num-train 200 \
+     --oracle-run-dir <oracle-run-on-eval-seeds>
+   ```
+
+3. Behavior cloning: fits `actor_mean` to the labels (MSE on the tanh-bounded
+   action, best validation epoch kept), writes a normal checkpoint, evaluates
+   it on the config's evaluation seeds, and writes `bc_summary.csv` when
+   `--oracle-run-dir` is given. `--label-run-dir` may be repeated.
+
+   ```bash
+   python3 experiments/multivariate_pham/behavior_cloning.py --config <config.yaml> \
+     --label-run-dir <labels-a> --label-run-dir <labels-b> --hidden-sizes 64,64 \
+     --experiment-id EXP-0010 --run-id bc --oracle-run-dir <oracle-run-on-eval-seeds>
+   ```
+
+4. Multimodality: compare oracle runs of the same instances with different
+   `--search-seed` (at least two) and test whether near-best actions are
+   similar and whether their midpoints stay near-best.
+
+   ```bash
+   python3 experiments/multivariate_pham/oracle_modes.py \
+     --oracle-run-dir <oracle-seed0> --oracle-run-dir <oracle-seed1> \
+     --tolerance 0.02 --output-dir outputs/EXP-0010/modes
+   ```

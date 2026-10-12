@@ -10,8 +10,12 @@ experiments/multivariate_pham/
 ├── evaluate.py
 ├── benchmark.py
 ├── analyze.py
-└── oracle.py
+├── oracle.py
+├── behavior_cloning.py
+└── oracle_modes.py
 ```
+
+`behavior_cloning.py`はoracleの行動を教師とする教師あり学習のCLI，`oracle_modes.py`は探索シードの異なるoracle実行間で最良行動の多峰性を調べるCLIである．
 
 再利用可能なPPO実装は`src/homotopy_path_learning/rl/`へ配置し，実験固有の設定読み込みと入出力だけを`experiments/`へ置く．
 
@@ -94,6 +98,13 @@ output:
 必要に応じて，制御点を問題ごとに直接最適化したoracle的手法を追加し，方策の性能上限を調べる．
 
 oracleは`src/homotopy_path_learning/evaluation/oracle.py`（探索と集計）と`experiments/multivariate_pham/oracle.py`（CLI）で実装する．方策を学習せず，評価問題ごとに潜在行動の箱$[-a_{\max},a_{\max}]^{(d_b-1)m}$を直接探索する．探索は，ゼロ行動（線形パス），一様乱数サンプル，(1+1)進化戦略（1/5成功則）の順に行う．評価問題は学習済み方策の評価と同じ固定シードを用い，問題ごとに方策のコストと比較できるようにする．探索回数は有限なので，oracleの改善量は到達可能な改善の下界である．
+
+さらに次の比較対象を追加する．
+
+- 定数行動ベースライン：全問題に共通の1つの潜在行動を，訓練問題（評価問題とは別のシード）の平均コストを最小化するように上記と同じ探索で求める．`experiments/multivariate_pham/oracle.py --mode constant`で実装し，評価問題上のコストを`ConstantBezier`として報告する．問題ごとの適応が必要かどうかを切り分けるために用いる．
+- oracleを教師とした教師あり学習（behavior cloning）：別シードの問題に対するoracleの観測と最良行動の組を教師データとし，`ActorCritic.actor_mean`を$\tanh$で有界化した出力との二乗誤差で学習する（`src/homotopy_path_learning/rl/behavior_cloning.py`，CLIは`experiments/multivariate_pham/behavior_cloning.py`）．検証損失が最小のエポックの重みを採用し，通常のチェックポイントとして保存するので，既存の評価コードでそのまま評価できる．
+
+推論時の制約として，学習済み方策を用いる手法では推論時は方策の順伝播1回と追跡1回のみとし，問題ごとの探索や追加の追跡を行わない．oracleは性能上限を測るための参照であり，この制約を満たさない．
 
 ## 6．評価指標
 

@@ -49,6 +49,8 @@ homotopy-path-learning/
 │   │   ├── benchmark.py
 │   │   ├── analyze.py
 │   │   ├── oracle.py
+│   │   ├── behavior_cloning.py
+│   │   ├── oracle_modes.py
 │   │   └── profile.py
 │   └── univariate/          （未作成．一変数実験は別ブランチ・タグで保存）
 │       └── README.md
@@ -87,6 +89,7 @@ src/homotopy_path_learning/
 │   ├── rollout.py
 │   ├── ppo.py
 │   ├── checkpoint.py
+│   ├── behavior_cloning.py
 │   └── train_utils.py
 ├── performance/
 │   ├── timing.py

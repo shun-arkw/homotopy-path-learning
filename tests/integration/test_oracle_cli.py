@@ -70,3 +70,155 @@ def test_oracle_cli_smoke(tmp_path) -> None:
     assert metadata["experiment_id"] == "EXP-TEST"
     assert metadata["oracle"]["latent_dim"] == 12
     assert "oracle.csv" in metadata["output_files"]
+
+
+CONFIG = "experiments/multivariate_pham/configs/exp-0004-smoke.yaml"
+
+
+def cli_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHON_JULIACALL_EXE"] = env.get("PYTHON_JULIACALL_EXE", "/usr/local/bin/julia")
+    env["PYTHON_JULIACALL_PROJECT"] = env.get("PYTHON_JULIACALL_PROJECT", str(Path.cwd() / "julia"))
+    return env
+
+
+def run_cli(script: str, *arguments: str) -> None:
+    subprocess.run(
+        [sys.executable, f"experiments/multivariate_pham/{script}", *arguments],
+        check=True,
+        env=cli_env(),
+    )
+
+
+def run_oracle_cli(output_root: Path, run_id: str, *extra: str) -> Path:
+    run_cli(
+        "oracle.py",
+        "--config",
+        CONFIG,
+        "--experiment-id",
+        "EXP-TEST",
+        "--run-id",
+        run_id,
+        "--budget",
+        "6",
+        "--n-random",
+        "3",
+        "--output-root",
+        str(output_root),
+        "--allow-dirty",
+        *extra,
+    )
+    return output_root / "EXP-TEST" / run_id
+
+
+def test_oracle_evaluation_seed_saves_observations(tmp_path) -> None:
+    run_dir = run_oracle_cli(
+        tmp_path / "outputs", "labels", "--evaluation-seed", "900000", "--num-instances", "4"
+    )
+
+    rows = read_csv_rows(run_dir / "oracle.csv")
+    assert [int(row["target_seed"]) for row in rows] == [900000, 900001, 900002, 900003]
+    assert np.load(run_dir / "oracle_observations.npy").shape == (4, 12)
+    metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["oracle"]["evaluation_seed"] == 900000
+
+
+def test_behavior_cloning_constant_and_modes_cli(tmp_path) -> None:
+    output_root = tmp_path / "outputs"
+    labels = run_oracle_cli(output_root, "labels", "--evaluation-seed", "900000", "--num-instances", "4")
+    oracle_a = run_oracle_cli(output_root, "oracle-a", "--num-instances", "2")
+    oracle_b = run_oracle_cli(output_root, "oracle-b", "--num-instances", "2", "--search-seed", "1")
+
+    run_cli(
+        "behavior_cloning.py",
+        "--config",
+        CONFIG,
+        "--label-run-dir",
+        str(labels),
+        "--hidden-sizes",
+        "16,16",
+        "--epochs",
+        "3",
+        "--val-fraction",
+        "0.25",
+        "--num-instances",
+        "2",
+        "--experiment-id",
+        "EXP-TEST",
+        "--run-id",
+        "bc",
+        "--oracle-run-dir",
+        str(oracle_a),
+        "--output-root",
+        str(output_root),
+        "--allow-dirty",
+    )
+    bc_dir = output_root / "EXP-TEST" / "bc"
+    assert (bc_dir / "checkpoints" / "last.pt").is_file()
+    history = read_csv_rows(bc_dir / "train_metrics.csv")
+    assert [int(row["epoch"]) for row in history] == [1, 2, 3]
+    assert [row["method"] for row in read_csv_rows(bc_dir / "bc_summary.csv")] == [
+        "Linear",
+        "Oracle",
+        "BehaviorCloning",
+    ]
+    metadata = json.loads((bc_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["behavior_cloning"]["n_train"] + metadata["behavior_cloning"]["n_val"] == 4
+    assert "evaluation/evaluation.csv" in metadata["output_files"]
+
+    run_cli(
+        "oracle.py",
+        "--config",
+        CONFIG,
+        "--mode",
+        "constant",
+        "--train-seed",
+        "900000",
+        "--num-train",
+        "3",
+        "--budget",
+        "5",
+        "--n-random",
+        "2",
+        "--num-instances",
+        "2",
+        "--oracle-run-dir",
+        str(oracle_a),
+        "--experiment-id",
+        "EXP-TEST",
+        "--run-id",
+        "const",
+        "--output-root",
+        str(output_root),
+        "--allow-dirty",
+    )
+    const_dir = output_root / "EXP-TEST" / "const"
+    assert np.load(const_dir / "constant_action.npy").shape == (8,)
+    assert np.load(const_dir / "constant_costs.npy").shape == (5,)
+    assert [row["method"] for row in read_csv_rows(const_dir / "constant_summary.csv")] == [
+        "Linear",
+        "Oracle",
+        "ConstantBezier",
+    ]
+    constant_metadata = json.loads((const_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert constant_metadata["constant"]["num_train"] == 3
+
+    modes_dir = tmp_path / "modes"
+    run_cli(
+        "oracle_modes.py",
+        "--oracle-run-dir",
+        str(oracle_a),
+        "--oracle-run-dir",
+        str(oracle_b),
+        "--num-instances",
+        "2",
+        "--tolerance",
+        "0.5",
+        "--output-dir",
+        str(modes_dir),
+    )
+    modes = read_csv_rows(modes_dir / "modes.csv")
+    assert len(modes) == 2
+    assert all(int(row["n_runs"]) == 2 for row in modes)
+    assert (modes_dir / "modes_summary.csv").is_file()
+    assert (modes_dir / "metadata.json").is_file()

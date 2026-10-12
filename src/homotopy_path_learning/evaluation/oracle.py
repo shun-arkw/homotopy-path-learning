@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import numpy.typing as npt
+from numpy.typing import ArrayLike
 
 from homotopy_path_learning.config import Phase6Config, build_env, build_system_spec
 from homotopy_path_learning.evaluation.datasets import fixed_evaluation_seeds
@@ -193,12 +194,16 @@ class OracleRun:
     ``(num_instances, budget)``; both are ``float64`` and ordered like
     ``rows`` (``target_seed = evaluation.seed + instance_id``). ``basis`` is the
     latent basis ``U`` with shape ``(2 * n_free_coeffs, latent_dim)``.
+    ``observations`` has shape ``(num_instances, obs_dim)`` and dtype
+    ``float32``; row ``i`` is the environment observation (the target's free
+    coefficients as real numbers) of instance ``i``, ordered like ``rows``.
     """
 
     rows: list[dict[str, Any]]
     best_actions: npt.NDArray[np.float64]
     cost_traces: npt.NDArray[np.float64]
     basis: npt.NDArray[np.float64]
+    observations: npt.NDArray[np.float32]
 
 
 def resolve_latent_dim(config: Phase6Config, latent_dim: int | str | None) -> int:
@@ -239,6 +244,7 @@ def run_oracle(
     n_random: int,
     search_seed: int,
     num_instances: int | None = None,
+    evaluation_seed: int | None = None,
     backend: object | None = None,
 ) -> OracleRun:
     """Search the best latent action separately for each evaluation instance.
@@ -248,16 +254,19 @@ def run_oracle(
     instance. The objective is the mean Bezier tracking cost
     ``J = N_acc + rho * N_rej`` (with the failure penalty) against the cached
     linear baseline of the same target. The search generator for instance
-    ``i`` is ``default_rng([search_seed, target_seed])``. ``backend`` is passed
+    ``i`` is ``default_rng([search_seed, target_seed])``. ``evaluation_seed``,
+    when given, replaces ``config.evaluation.seed`` as the base of the instance
+    seeds ``seed + i``. ``backend`` is passed
     to :func:`build_env` and is intended for tests.
     """
 
     seeds = fixed_evaluation_seeds(
-        seed=config.evaluation.seed,
+        seed=config.evaluation.seed if evaluation_seed is None else int(evaluation_seed),
         num_instances=config.evaluation.num_instances if num_instances is None else num_instances,
     )
     env = build_env(config, backend=backend)
     rows: list[dict[str, Any]] = []
+    observations: list[np.ndarray] = []
     actions: list[np.ndarray] = []
     traces: list[np.ndarray] = []
     try:
@@ -267,6 +276,7 @@ def run_oracle(
             start = time.time()
             env.reset(seed=target_seed)
             context = env.current_episode_context()
+            observations.append(np.array(context.observation, dtype=np.float32, copy=True))
 
             def objective(action: npt.NDArray[np.float64]) -> float:
                 return float(env.evaluate_action_against_context(context, action).tracking_cost.mean)
@@ -317,6 +327,7 @@ def run_oracle(
         best_actions=np.stack(actions).astype(np.float64),
         cost_traces=np.stack(traces).astype(np.float64),
         basis=basis,
+        observations=np.stack(observations).astype(np.float32),
     )
 
 
@@ -329,8 +340,10 @@ def _delta_j_percent(cost: float, linear_cost: float) -> float:
 def learned_costs_from_evaluation(
     evaluation_rows: Sequence[Mapping[str, Any]],
     oracle_rows: Sequence[Mapping[str, Any]],
+    *,
+    method: str = "LearnedBezier",
 ) -> tuple[list[float], list[int]]:
-    """Return ``LearnedBezier`` mean costs and success flags aligned with ``oracle_rows``.
+    """Return mean costs of ``method`` (default ``LearnedBezier``) and success flags aligned with ``oracle_rows``.
 
     ``evaluation_rows`` are rows of a PPO ``evaluation/evaluation.csv``. Every
     oracle ``target_seed`` must appear, and the ``Linear`` cost recorded there
@@ -343,7 +356,7 @@ def learned_costs_from_evaluation(
     linear: dict[int, float] = {}
     for row in evaluation_rows:
         seed = int(row["target_seed"])
-        if row["method"] == "LearnedBezier":
+        if row["method"] == method:
             learned[seed] = float(row["mean_cost"])
             learned_success[seed] = int(row["problem_success"])
         elif row["method"] == "Linear":
@@ -367,6 +380,8 @@ def learned_costs_from_evaluation(
 def summarize_oracle(
     oracle_rows: Sequence[Mapping[str, Any]],
     learned: Mapping[str, tuple[Sequence[float], Sequence[int]]] | None = None,
+    *,
+    label_format: str = "LearnedBezier[{label}]",
 ) -> list[dict[str, Any]]:
     """Aggregate oracle rows and optional aligned policy costs.
 
@@ -377,7 +392,8 @@ def summarize_oracle(
     of the oracle's improvement obtained by a method (empty when the oracle
     does not improve on average). ``learned`` maps a label (for example a PPO
     run id) to ``(costs, success_flags)`` aligned with ``oracle_rows``, as
-    returned by :func:`learned_costs_from_evaluation`.
+    returned by :func:`learned_costs_from_evaluation`. The ``method`` column of
+    a learned entry is ``label_format.format(label=label)``.
     """
 
     if not oracle_rows:
@@ -411,19 +427,153 @@ def summarize_oracle(
             raise ValueError(
                 f"learned costs and success flags for {label!r} must have shape {linear.shape}."
             )
-        summaries.append(summary(f"LearnedBezier[{label}]", costs, float(np.mean(flags))))
+        summaries.append(summary(label_format.format(label=label), costs, float(np.mean(flags))))
     return summaries
 
 
+@dataclass(frozen=True)
+class ConstantActionResult:
+    """Result of :func:`search_constant_action`.
+
+    ``action`` has shape ``(action_dim,)`` and dtype ``float64``. ``costs`` has
+    shape ``(n_evals,)`` and dtype ``float64`` and lists the mean training cost
+    of every searched action (``costs[0]`` is the zero action).
+    ``train_linear_mean_cost`` is the mean linear-path cost over the training
+    instances; ``train_seeds`` are the training target seeds.
+    """
+
+    action: npt.NDArray[np.float64]
+    train_mean_cost: float
+    train_linear_mean_cost: float
+    costs: npt.NDArray[np.float64]
+    train_seeds: list[int]
+
+
+def search_constant_action(
+    config: Phase6Config,
+    *,
+    train_seed: int,
+    num_train: int,
+    budget: int,
+    n_random: int,
+    search_seed: int,
+    backend: object | None = None,
+) -> ConstantActionResult:
+    """Search one action shared by all problems, minimizing the mean training cost.
+
+    Training instances are the targets ``train_seed + i`` for ``i < num_train``.
+    The objective is the mean over these instances of the Bezier tracking cost.
+    The zero action (linear path) is always evaluated first, so
+    ``train_mean_cost <= train_linear_mean_cost``. The search generator is
+    ``default_rng([search_seed, train_seed])``.
+    """
+
+    count = _positive_int("num_train", num_train)
+    env = build_env(config, backend=backend)
+    try:
+        seeds = [int(train_seed) + i for i in range(count)]
+        contexts = []
+        for seed in seeds:
+            env.reset(seed=seed)
+            contexts.append(env.current_episode_context())
+        linear_mean = float(np.mean([float(ctx.linear_cost.mean) for ctx in contexts]))
+
+        def objective(action: npt.NDArray[np.float64]) -> float:
+            return float(
+                np.mean([env.evaluate_action_against_context(ctx, action).tracking_cost.mean for ctx in contexts])
+            )
+
+        result = search_best_action(
+            objective,
+            dim=int(env.action_space.shape[0]),
+            action_limit=config.path.action_limit,
+            rng=np.random.default_rng([int(search_seed), int(train_seed)]),
+            budget=budget,
+            n_random=n_random,
+        )
+    finally:
+        env.close()
+    return ConstantActionResult(
+        action=np.array(result.best_action, dtype=np.float64, copy=True),
+        train_mean_cost=float(result.best_cost),
+        train_linear_mean_cost=linear_mean,
+        costs=np.array(result.costs, dtype=np.float64, copy=True),
+        train_seeds=seeds,
+    )
+
+
+def near_best_action_stats(
+    costs: ArrayLike,
+    actions: ArrayLike,
+    *,
+    tolerance: float,
+) -> dict[str, float]:
+    """Summarize how similar the near-best actions of repeated searches are.
+
+    ``costs`` has shape ``(R,)`` (best cost of each of ``R`` search runs) and
+    ``actions`` has shape ``(R, d)`` (the corresponding best actions). Runs
+    with ``cost <= min(costs) * (1 + tolerance)`` are "good". Returns
+    ``n_runs``, ``n_good``, ``best_cost_spread_percent`` (relative spread of
+    all costs), and the mean pairwise cosine similarity and L2 distance among
+    good actions (``nan`` when fewer than two are good). The cosine of a pair
+    involving a zero vector is defined as 0. Costs must be positive.
+    """
+
+    cost_array = np.asarray(costs, dtype=np.float64)
+    action_array = np.asarray(actions, dtype=np.float64)
+    if cost_array.ndim != 1 or cost_array.size == 0:
+        raise ValueError(f"costs must have shape (R,) with R >= 1, got {cost_array.shape}.")
+    if action_array.ndim != 2 or action_array.shape[0] != cost_array.size:
+        raise ValueError(
+            f"actions must have shape ({cost_array.size}, d), got {action_array.shape}."
+        )
+    if not (np.all(np.isfinite(cost_array)) and np.all(np.isfinite(action_array))):
+        raise ValueError("costs and actions must be finite.")
+    if not np.all(cost_array > 0.0):
+        raise ValueError("costs must be positive.")
+    tol = float(tolerance)
+    if not np.isfinite(tol) or tol < 0.0:
+        raise ValueError(f"tolerance must be finite and nonnegative, got {tolerance!r}.")
+
+    best = float(np.min(cost_array))
+    good = action_array[cost_array <= best * (1.0 + tol)]
+    n_good = int(good.shape[0])
+    cosine = float("nan")
+    distance = float("nan")
+    if n_good >= 2:
+        norms = np.linalg.norm(good, axis=1)
+        cosines: list[float] = []
+        distances: list[float] = []
+        for i in range(n_good):
+            for j in range(i + 1, n_good):
+                distances.append(float(np.linalg.norm(good[i] - good[j])))
+                if norms[i] == 0.0 or norms[j] == 0.0:
+                    cosines.append(0.0)
+                else:
+                    cosines.append(float(np.dot(good[i], good[j]) / (norms[i] * norms[j])))
+        cosine = float(np.mean(cosines))
+        distance = float(np.mean(distances))
+    return {
+        "n_runs": int(cost_array.size),
+        "n_good": n_good,
+        "best_cost_spread_percent": (float(np.max(cost_array)) - best) / best * 100.0,
+        "mean_pairwise_cosine": cosine,
+        "mean_pairwise_distance": distance,
+    }
+
+
 __all__ = [
+    "ConstantActionResult",
     "ORACLE_FIELDS",
     "ORACLE_SUMMARY_FIELDS",
     "OracleRun",
     "OracleSearchResult",
     "learned_costs_from_evaluation",
+    "near_best_action_stats",
     "resolve_latent_dim",
     "run_oracle",
     "search_best_action",
+    "search_constant_action",
     "summarize_oracle",
     "with_latent_dim",
 ]

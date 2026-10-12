@@ -10,24 +10,112 @@ from _bootstrap import preload_julia
 preload_julia()
 
 import numpy as np
+import torch
 
 from homotopy_path_learning.config import build_env, load_config, save_config
 from homotopy_path_learning.evaluation.metrics import read_rows, write_rows
 from homotopy_path_learning.evaluation.oracle import (
     ORACLE_FIELDS,
     ORACLE_SUMMARY_FIELDS,
+    search_constant_action,
     learned_costs_from_evaluation,
     resolve_latent_dim,
     run_oracle,
     summarize_oracle,
     with_latent_dim,
 )
+from homotopy_path_learning.evaluation.evaluator import evaluate_policy_rows
+from homotopy_path_learning.evaluation.metrics import EVALUATION_FIELDS
 from homotopy_path_learning.rl.train_utils import (
     collect_metadata,
     refresh_metadata_output_files,
     require_clean_git,
     write_metadata,
 )
+
+
+class ConstantAgent:
+    """Policy that returns the same action for every observation."""
+
+    def __init__(self, action: np.ndarray) -> None:
+        self.action = torch.as_tensor(np.asarray(action, dtype=np.float32))
+
+    def deterministic_action(self, observation: torch.Tensor) -> torch.Tensor:
+        """Return the action repeated to shape ``(batch, action_dim)`` (float32)."""
+
+        batch = 1 if observation.ndim == 1 else int(observation.shape[0])
+        return self.action.to(observation.device).unsqueeze(0).repeat(batch, 1)
+
+
+def run_constant_mode(args: argparse.Namespace, config, run_dir: Path, start_time: str) -> None:
+    """Search one constant action on training targets and evaluate it."""
+
+    search = search_constant_action(
+        config,
+        train_seed=args.train_seed,
+        num_train=args.num_train,
+        budget=args.budget,
+        n_random=args.n_random,
+        search_seed=args.search_seed,
+    )
+    np.save(run_dir / "constant_action.npy", search.action)
+    np.save(run_dir / "constant_costs.npy", search.costs)
+    rows = evaluate_policy_rows(
+        config=config,
+        run_id=args.run_id,
+        agent=ConstantAgent(search.action),
+        device="cpu",
+        methods=("Linear", "LearnedBezier"),
+        num_instances=args.num_instances,
+        evaluation_seed=args.evaluation_seed,
+    )
+    for row in rows:
+        if row["method"] == "LearnedBezier":
+            row["method"] = "ConstantBezier"
+    write_rows(run_dir / "evaluation" / "evaluation.csv", rows, fieldnames=EVALUATION_FIELDS)
+
+    summaries = []
+    if args.oracle_run_dir is not None:
+        oracle_rows = read_rows(Path(args.oracle_run_dir) / "oracle.csv")
+        learned = learned_costs_from_evaluation(rows, oracle_rows, method="ConstantBezier")
+        summaries = summarize_oracle(oracle_rows, {"ConstantBezier": learned}, label_format="{label}")
+        write_rows(run_dir / "constant_summary.csv", summaries, fieldnames=ORACLE_SUMMARY_FIELDS)
+
+    env = build_env(config)
+    try:
+        metadata = collect_metadata(
+            config=config,
+            run_id=args.run_id,
+            run_dir=run_dir,
+            status="Completed",
+            start_time_utc=start_time,
+            end_time_utc=datetime.now(timezone.utc).isoformat(),
+            config_path=args.config,
+            env=env,
+        )
+    finally:
+        env.close()
+    metadata["constant"] = {
+        "train_seed": args.train_seed,
+        "num_train": args.num_train,
+        "budget": args.budget,
+        "n_random": args.n_random,
+        "search_seed": args.search_seed,
+        "train_mean_cost": search.train_mean_cost,
+        "train_linear_mean_cost": search.train_linear_mean_cost,
+        "oracle_run_dir": args.oracle_run_dir,
+    }
+    write_metadata(run_dir / "metadata.json", metadata)
+    refresh_metadata_output_files(run_dir)
+
+    print(f"train: linear_mean={search.train_linear_mean_cost:.4f} constant_mean={search.train_mean_cost:.4f}")
+    for summary in summaries:
+        print(
+            f"{summary['method']}: mean_cost={summary['mean_cost']:.4f} "
+            f"delta_j={summary['delta_j_percent']:+.2f}% positive_rate={summary['positive_rate']:.2f} "
+            f"captured={summary['captured_fraction']}"
+        )
+    print(f"RUN_DIR={run_dir}")
 
 
 def main() -> None:
@@ -42,11 +130,18 @@ def main() -> None:
     parser.add_argument("--n-random", type=int, default=100)
     parser.add_argument("--search-seed", type=int, default=0)
     parser.add_argument("--num-instances", type=int, default=None)
+    parser.add_argument("--evaluation-seed", type=int, default=None)
+    parser.add_argument("--mode", choices=["per-instance", "constant"], default="per-instance")
+    parser.add_argument("--train-seed", type=int, default=None, help="Constant mode: base seed of training targets.")
+    parser.add_argument("--num-train", type=int, default=200, help="Constant mode: number of training targets.")
+    parser.add_argument("--oracle-run-dir", default=None, help="Constant mode: per-instance oracle run to compare to.")
     parser.add_argument("--compare-run-dir", action="append", default=[])
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
 
+    if args.mode == "constant" and args.train_seed is None:
+        parser.error("--train-seed is required in constant mode.")
     require_clean_git(allow_dirty=args.allow_dirty)
     source_config = load_config(args.config)
     latent_dim = resolve_latent_dim(source_config, args.latent_dim)
@@ -63,17 +158,23 @@ def main() -> None:
     save_config(config, run_dir / "config.yaml")
     start_time = datetime.now(timezone.utc).isoformat()
 
+    if args.mode == "constant":
+        run_constant_mode(args, config, run_dir, start_time)
+        return
+
     result = run_oracle(
         config,
         budget=args.budget,
         n_random=args.n_random,
         search_seed=args.search_seed,
         num_instances=args.num_instances,
+        evaluation_seed=args.evaluation_seed,
     )
     write_rows(run_dir / "oracle.csv", result.rows, fieldnames=ORACLE_FIELDS)
     np.save(run_dir / "oracle_actions.npy", result.best_actions)
     np.save(run_dir / "oracle_cost_traces.npy", result.cost_traces)
     np.save(run_dir / "latent_basis.npy", result.basis)
+    np.save(run_dir / "oracle_observations.npy", result.observations)
 
     learned = {}
     for compare_dir in args.compare_run_dir:
@@ -103,6 +204,7 @@ def main() -> None:
         "budget": args.budget,
         "n_random": args.n_random,
         "search_seed": args.search_seed,
+        "evaluation_seed": args.evaluation_seed,
         "search_rng_rule": "default_rng([search_seed, target_seed])",
         "compare_run_dirs": list(args.compare_run_dir),
     }
