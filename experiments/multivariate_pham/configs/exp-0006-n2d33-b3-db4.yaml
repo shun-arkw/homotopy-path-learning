@@ -1,5 +1,5 @@
 experiment:
-  id: EXP-0007
+  id: EXP-0006
   name: n2d33-b3-db4
   seed: 0
   device: cpu

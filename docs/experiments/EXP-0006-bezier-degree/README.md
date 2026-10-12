@@ -162,9 +162,14 @@ $d_b=4$でのみ明確に縮小する（-8.43%）という，やや異なるパ�
 `evaluation.seed=37000`）。
 
 設定ファイル：`experiments/multivariate_pham/configs/exp-0006-n2d33-b3-db{2,3,4}.yaml`。
-**注意**：設定ファイル作成時に`experiment.id`を`EXP-0006`に変更し忘れたため，
-出力は`outputs/EXP-0007/exp0006-n2d33-b3-db{2,3,4}-20260928T031259Z/`に
-格納されている（実験内容自体には影響しない）。
+出力：`outputs/EXP-0006/exp0006-n2d33-b3-db{2,3,4}-20260928T031259Z/`。
+
+**注意**：実行時は設定ファイルの`experiment.id`が誤って`EXP-0007`のまま
+だったため，出力は当初`outputs/EXP-0007/`配下に作成された。実行後に
+ディレクトリを`outputs/EXP-0006/`へ移動し，設定ファイルの`experiment.id`も
+`EXP-0006`に修正した。ただし各run内の`metadata.json`と`config.yaml`には，
+実行時の値である`EXP-0007`がそのまま記録されている。実験内容（系，`bound`，
+$d_b$，seed）自体には影響しない。
 
 ### 10.1．結果
 
