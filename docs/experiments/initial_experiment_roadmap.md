@@ -27,6 +27,8 @@
 | EXP-0021 | attention方策のn3系への適用（n3-d222，n3-d333） | 実行中（`EXP-0021-attention-n3/`）．本ロードマップ外で追加 |
 | EXP-0022 | attention方策の改善の原因の切り分け（n4-d2222） | 実行中（`EXP-0022-attention-ablation/`）．本ロードマップ外で追加 |
 | EXP-0023 | n4-d3333の本番パイプライン（attentionとMLP） | 実行中（`EXP-0023-n4-d3333-pipeline/`）．本ロードマップ外で追加 |
+| EXP-0024 | attention方策の微調整の延長（2000反復→4000反復） | 実行中（`EXP-0024-finetune-extension/`）．本ロードマップ外で追加 |
+| EXP-0025 | n4-d3333での小さいattentionと推論時間 | 実行中（`EXP-0025-n4-d3333-small-attention/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 

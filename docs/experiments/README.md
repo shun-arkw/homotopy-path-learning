@@ -347,3 +347,23 @@ n4-d3333（$d_b=2$）で，教師データの生成から微調整までをMLP�
 実験記録:  docs/experiments/EXP-0023-n4-d3333-pipeline/
 生成物:    外部サーバのoutputs/EXP-0023/<run-id>/（実行スクリプトはoutputs/EXP-0023/scripts/）
 ```
+
+### EXP-0024：attention方策の微調整の延長（2000反復→4000反復）
+
+EXP-0020とEXP-0021のattention＋微調整の方策から，さらに2000反復の微調整を行い，試験問題で比べる．
+
+```text
+実行設定:  EXP-0020，EXP-0021と同じ
+実験記録:  docs/experiments/EXP-0024-finetune-extension/
+生成物:    outputs/EXP-0024/<run-id>/（実行スクリプトはoutputs/EXP-0024/scripts/）
+```
+
+### EXP-0025：n4-d3333での小さいattentionと推論時間
+
+n4-d3333で小さいattentionの方策を学習し，EXP-0023の方策とあわせて推論時間を計測する．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db2.yaml
+実験記録:  docs/experiments/EXP-0025-n4-d3333-small-attention/
+生成物:    外部サーバのoutputs/EXP-0025/<run-id>/（実行スクリプトはoutputs/EXP-0025/scripts/）
+```
