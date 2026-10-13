@@ -24,6 +24,9 @@
 | EXP-0018 | n4-d3333のoracle改善余地の予備調査（$d_b=2$と$d_b=3$） | 完了（`EXP-0018-n4-d3333-prelim/`）．本ロードマップ外で追加 |
 | EXP-0019 | 教師データの量とMLPの教師あり学習（n4-d2222） | 完了（`EXP-0019-n4-bc-data-scaling/`）．本ロードマップ外で追加 |
 | EXP-0020 | 置換に同変なattention方策とMLPの比較（n4-d2222） | 完了（`EXP-0020-attention-policy/`）．本ロードマップ外で追加 |
+| EXP-0021 | attention方策のn3系への適用（n3-d222，n3-d333） | 実行中（`EXP-0021-attention-n3/`）．本ロードマップ外で追加 |
+| EXP-0022 | attention方策の改善の原因の切り分け（n4-d2222） | 実行中（`EXP-0022-attention-ablation/`）．本ロードマップ外で追加 |
+| EXP-0023 | n4-d3333の本番パイプライン（attentionとMLP） | 実行中（`EXP-0023-n4-d3333-pipeline/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 

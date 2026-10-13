@@ -315,3 +315,35 @@ ADR-0007の第1段階のattention方策を，EXP-0017と同じ教師データ・
 実験記録:  docs/experiments/EXP-0020-attention-policy/
 生成物:    outputs/EXP-0020/<run-id>/（実行スクリプトはoutputs/EXP-0020/scripts/）
 ```
+
+### EXP-0021：attention方策のn3系への適用（n3-d222，n3-d333）
+
+EXP-0020のattention方策を，MLPの標準パイプラインと同じ教師データでn3-d222（$d_b=2$）とn3-d333（$d_b=3$）に適用し，新しい試験問題でMLPと比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0016-n3-d222-db2.yaml
+           experiments/multivariate_pham/configs/exp-0014-n3-d333.yaml
+実験記録:  docs/experiments/EXP-0021-attention-n3/
+生成物:    outputs/EXP-0021/<run-id>/（実行スクリプトはoutputs/EXP-0021/scripts/）
+```
+
+### EXP-0022：attention方策の改善の原因の切り分け（n4-d2222）
+
+パラメータ数をそろえたMLP，系列Transformer（置換の対称性を構造として持たない），小さいattentionと比べ，EXP-0020の改善の原因を切り分ける．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml
+実装設計:  docs/design/implementation/attention_policy.md（10節）
+実験記録:  docs/experiments/EXP-0022-attention-ablation/
+生成物:    outputs/EXP-0022/<run-id>/（実行スクリプトはoutputs/EXP-0022/scripts/）
+```
+
+### EXP-0023：n4-d3333の本番パイプライン（attentionとMLP）
+
+n4-d3333（$d_b=2$）で，教師データの生成から微調整までをMLPとattention方策の両方で行い，試験問題で比べる．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db2.yaml
+実験記録:  docs/experiments/EXP-0023-n4-d3333-pipeline/
+生成物:    外部サーバのoutputs/EXP-0023/<run-id>/（実行スクリプトはoutputs/EXP-0023/scripts/）
+```

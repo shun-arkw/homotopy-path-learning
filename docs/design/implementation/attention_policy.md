@@ -90,3 +90,28 @@
   - 主基準：微調整後の$\Delta J$の差（attention−MLP，試験500問題）が$-1.0$ポイント以下，かつ95%区間が0を含まない → attentionは有効．
   - 副基準：教師あり学習の段階の到達率の差が+0.05以上 → 教師あり学習の律速を緩める．
   - EXP-0019（MLP，教師データ3万件）の方策も，同じ試験問題で評価して並べる．
+
+## 10．比較用の系列Transformer（EXP-0022）
+
+attention方策の改善が「置換の対称性を構造で満たすこと」によるかを調べるため，置換の対称性を構造として持たないTransformerを比較用に実装する（ADR-0007の「比較の基準」）．
+
+- **名前：** 系列Transformer．`actor_type="sequence"`．新規ファイル`src/homotopy_path_learning/rl/sequence.py`のクラス`SequenceActor(nn.Module)`．
+- **トークン：** 自由係数1つにつき1トークン（$D_{\mathrm{free}}$個）．並びは自由係数の順（`np.flatnonzero(spec.free_coefficient_mask)`の順）．
+  - 特徴量は係数の実部と虚部の2つ．線形層で$d_{\mathrm{model}}$次元に埋め込む．
+  - 学習する位置埋め込み（$D_{\mathrm{free}}\times d_{\mathrm{model}}$，標準偏差0.02の正規分布で初期化）を足す．これにより，各トークンがどの方程式のどの単項式かを位置で区別する．
+  - 次数などの特徴量は入れない．位置埋め込みがその情報を担う．
+- **ブロック：** attention方策と同じ構成で，pre-LNの「attention副層2つ＋FFN」を$L$層重ねる．ただし，2つのattention副層はどちらも全トークンにかかる．attention方策の`_AttentionSublayer`を再利用してよい．パラメータ数は，同じ$d_{\mathrm{model}}$，ヘッド数，$L$，FFNの次元のattention方策とほぼ同じになる．
+- **出力：** 最後にLayerNormをかけ，線形の出力ヘッド（重みは標準偏差0.01の直交初期化，バイアス0）で，トークンごとに$2(d_b-1)$個の実数（中間制御点$k$での$\delta$の実部と虚部）を出す．
+  - これを自由係数の順の実ベクトル$\delta_k=[\mathrm{Re}\,\delta,\mathrm{Im}\,\delta]$に並べ，$u_k=U^\top\delta_k$として連結する（5節と同じ）．
+- **サポート：** 任意のサポートで動く（1次の項と定数項に限らない）．
+- **組み込み：**
+  - `ActorCritic`，`build_agent`，checkpoint，`behavior_cloning.py`の`--actor-type`に`"sequence"`を追加する．
+  - 大きさの引数は，attention方策と同じ`attention_d_model`，`attention_heads`，`attention_layers`，`attention_ff_dim`（CLIでは`--attention-*`）を使う．
+  - `finetune.py`，`evaluate.py`，`timing.py`は，checkpointから種類を引き継いで動くこと．
+  - 既存の`"mlp"`と`"attention"`の動作，既存のcheckpointの読み込みは変えない．
+- **テスト：**
+  - 出力の形が`(batch, (d_b-1)·2D_free)`であること．初期化直後の出力が小さいこと．
+  - n2-d33-denseなど，2次の項を含むサポートでも構成と順伝播ができること．
+  - n4-d2222で，パラメータ数が同じ大きさのattention方策の±5%以内であること．
+  - checkpointの保存と読み込みで出力が一致すること．
+  - smoke設定で，`--actor-type sequence`の教師あり学習（数エポック）と微調整（数反復）を実行できること．
