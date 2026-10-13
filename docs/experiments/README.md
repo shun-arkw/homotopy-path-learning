@@ -367,3 +367,23 @@ n4-d3333で小さいattentionの方策を学習し，EXP-0023の方策とあわ�
 実験記録:  docs/experiments/EXP-0025-n4-d3333-small-attention/
 生成物:    外部サーバのoutputs/EXP-0025/<run-id>/（実行スクリプトはoutputs/EXP-0025/scripts/）
 ```
+
+### EXP-0026：attention方策のn2-d33への適用
+
+n2-d33（$d_b=3$）で，MLPの標準パイプラインと同じ教師データでattention方策を学習し，新しい試験問題でMLPと比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0007-n2-d33-seed0.yaml
+実験記録:  docs/experiments/EXP-0026-attention-n2-d33/
+生成物:    outputs/EXP-0026/<run-id>/（実行スクリプトはoutputs/EXP-0026/scripts/）
+```
+
+### EXP-0027：教師あり学習なしでのattention方策の微調整（n4-d2222）
+
+教師データを使わず，初期化したままのattention方策から微調整だけを行い，教師あり学習ありの場合と比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml
+実験記録:  docs/experiments/EXP-0027-finetune-without-bc/
+生成物:    outputs/EXP-0027/<run-id>/（実行スクリプトはoutputs/EXP-0027/scripts/）
+```
