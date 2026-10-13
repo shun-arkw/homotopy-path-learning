@@ -417,3 +417,13 @@ n5-d33333の20問題で，多点スタート（5回）と長い探索（予算10
 実験記録:  docs/experiments/EXP-0030-label-quality-vs-quantity/
 生成物:    outputs/EXP-0030/<run-id>/（実行スクリプトはoutputs/EXP-0030/scripts/）
 ```
+
+### EXP-0031：n5-d22222のパイプライン（MLPとattention）
+
+n5-d22222（$d_b=2$）で，EXP-0028の教師データを使って，MLPとattention方策の教師あり学習と微調整を行い，試験問題で比べる．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d22222-db2.yaml
+実験記録:  docs/experiments/EXP-0031-n5-d22222-pipeline/
+生成物:    外部サーバのoutputs/EXP-0031/<run-id>/（実行スクリプトはoutputs/EXP-0031/scripts/）
+```
