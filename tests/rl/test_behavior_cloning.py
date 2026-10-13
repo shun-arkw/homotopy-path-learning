@@ -64,6 +64,27 @@ def test_validation_loss_decreases_and_best_weights_restored():
     assert loss == pytest.approx(result.best_val_loss, abs=1e-6)
 
 
+def test_zero_epochs_keeps_initial_weights():
+    obs, act = make_data(80)
+    agent = make_agent()
+    initial = copy.deepcopy(agent.state_dict())
+    result, optimizer = run(agent, obs, act, epochs=0)
+
+    assert result.history == []
+    assert result.best_epoch == 0
+    assert result.n_train + result.n_val == 80
+    for key, value in agent.state_dict().items():
+        assert torch.equal(value, initial[key])
+    order = np.random.default_rng(0).permutation(80)
+    val_idx = order[result.n_train :]
+    with torch.no_grad():
+        pred = predicted_actions(agent, torch.as_tensor(obs[val_idx]))
+        loss = torch.nn.functional.mse_loss(pred, torch.as_tensor(act[val_idx])).item()
+    assert result.best_val_loss == pytest.approx(loss, abs=1e-7)
+    assert np.isfinite(result.best_val_loss)
+    assert isinstance(optimizer, torch.optim.Optimizer)
+
+
 def test_critic_is_untouched():
     obs, act = make_data(50)
     agent = make_agent()
@@ -99,7 +120,9 @@ def test_determinism_and_inputs_not_mutated():
         ({"obs": lambda o, a: (np.where(o > 0.9, np.nan, o), a)}, ValueError),
         ({"kw": {"val_fraction": 0.0}}, ValueError),
         ({"kw": {"val_fraction": 1.0}}, ValueError),
-        ({"kw": {"epochs": 0}}, ValueError),
+        ({"kw": {"epochs": -1}}, ValueError),
+        ({"kw": {"epochs": 1.5}}, TypeError),
+        ({"kw": {"epochs": True}}, TypeError),
         ({"kw": {"batch_size": -1}}, ValueError),
         ({"kw": {"learning_rate": 0.0}}, ValueError),
     ],

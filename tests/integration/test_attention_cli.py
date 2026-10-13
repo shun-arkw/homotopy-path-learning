@@ -120,3 +120,32 @@ def test_attention_bc_finetune_evaluate_timing_compare(tmp_path) -> None:
     assert len(pairs) == 6
     assert all(float(r["ci_low"]) <= float(r["ci_high"]) for r in pairs if r["ci_low"] != "nan")
     assert np.isfinite(float(pairs[0]["diff"]))
+
+
+def test_attention_zero_epoch_bc_then_finetune(tmp_path) -> None:
+    root = tmp_path / "outputs"
+    labels = oracle(root, "labels", "--evaluation-seed", "900000", "--num-instances", "4")
+
+    run_cli(
+        "behavior_cloning.py", "--config", CONFIG, "--label-run-dir", str(labels), "--latent-dim", "full",
+        "--actor-type", "attention", *SMALL, "--epochs", "0", "--val-fraction", "0.25",
+        "--num-instances", "2", "--experiment-id", "EXP-TEST", "--run-id", "bc0", "--output-root", str(root),
+        "--allow-dirty",
+    )
+    bc = root / "EXP-TEST" / "bc0"
+    assert load_checkpoint(bc / "checkpoints" / "last.pt")["actor_type"] == "attention"
+    assert read_csv_rows(bc / "train_metrics.csv") == []  # header only
+    metadata = json.loads((bc / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["behavior_cloning"]["epochs"] == 0
+    assert metadata["behavior_cloning"]["best_epoch"] == 0
+    assert len(read_csv_rows(bc / "evaluation" / "evaluation.csv")) == 4
+
+    run_cli(
+        "finetune.py", "--config", CONFIG, "--latent-dim", "full", "--init-run-dir", str(bc),
+        "--iterations", "2", "--batch-problems", "2", "--pairs", "1", "--val-instances", "2",
+        "--val-interval", "1", "--num-instances", "2", "--experiment-id", "EXP-TEST", "--run-id", "ft0",
+        "--output-root", str(root), "--allow-dirty",
+    )
+    ft = root / "EXP-TEST" / "ft0"
+    assert load_checkpoint(ft / "checkpoints" / "last.pt")["actor_type"] == "attention"
+    assert len(read_csv_rows(ft / "val_metrics.csv")) == 3

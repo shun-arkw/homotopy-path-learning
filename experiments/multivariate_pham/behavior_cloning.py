@@ -87,7 +87,13 @@ def main() -> None:
     parser.add_argument("--attention-heads", type=int, default=4)
     parser.add_argument("--attention-layers", type=int, default=4)
     parser.add_argument("--attention-ff-dim", type=int, default=256)
-    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=300,
+        help="Training epochs (>= 0). 0 = no training: save the freshly initialized policy; "
+        "train_metrics.csv then contains only the header and best_epoch=0.",
+    )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1.0e-3)
     parser.add_argument("--val-fraction", type=float, default=0.1)

@@ -21,7 +21,9 @@ class BehaviorCloningResult:
     ``history`` has one dict per epoch with keys ``epoch`` (1-based),
     ``train_loss`` and ``val_loss`` (MSE over all action coordinates).
     ``best_epoch`` is the 1-based epoch with the lowest validation loss; its
-    weights are restored into the agent. ``n_augmentations`` is the number of
+    weights are restored into the agent. With ``epochs == 0`` no training is
+    done: ``history`` is empty, ``best_epoch`` is 0 and ``best_val_loss`` is the
+    validation loss of the untouched initial weights. ``n_augmentations`` is the number of
     symmetry elements used for augmentation (0: none) and
     ``clipped_label_fraction`` is the fraction of augmented label entries that
     had to be clipped into the action bounds over the whole run.
@@ -45,6 +47,13 @@ def predicted_actions(agent: ActorCritic, observations: torch.Tensor) -> torch.T
 
     mean = agent.actor_mean(agent._as_batch(observations))
     return agent.distribution.action_from_pre_tanh(mean)
+
+
+def _non_negative_int(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be of type int, got {type(value).__name__}.")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative, got {value!r}.")
 
 
 def _positive(name: str, value: object, kind: type) -> None:
@@ -85,9 +94,14 @@ def train_behavior_cloning(
     minibatch draws an element independently (from the seeded torch generator)
     and becomes ``obs' = M_obs @ obs``, ``act' = clip(M_act @ act, low, high)``.
     Validation and the reported full train loss use the original data.
+
+    ``epochs`` must be an integer ``>= 0``. ``epochs=0`` performs no training:
+    the agent keeps exactly its initial weights, ``history`` is empty,
+    ``best_epoch`` is 0 and ``best_val_loss`` is the validation loss of the
+    initial weights (computed once, without consuming any random numbers).
     """
 
-    _positive("epochs", epochs, int)
+    _non_negative_int("epochs", epochs)
     _positive("batch_size", batch_size, int)
     _positive("learning_rate", learning_rate, float)
     if not 0.0 < float(val_fraction) < 1.0:
@@ -186,6 +200,8 @@ def train_behavior_cloning(
 
     agent.actor_mean.load_state_dict(best_state)
     agent.eval()
+    if int(epochs) == 0:
+        best_val = full_loss(val_obs, val_act)
     result = BehaviorCloningResult(
         history=history,
         best_epoch=best_epoch,
