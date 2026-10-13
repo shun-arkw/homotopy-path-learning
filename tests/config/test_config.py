@@ -104,6 +104,8 @@ def test_optional_actor_keys_default_and_validate() -> None:
     data["ppo"]["actor_type"] = "attention"
     data["ppo"]["attention_d_model"] = 64
     assert parse_config_dict(data).ppo.attention_kwargs["d_model"] == 64
+    data["ppo"]["actor_type"] = "sequence"
+    assert parse_config_dict(data).ppo.actor_type == "sequence"
     data["ppo"]["actor_type"] = "transformer"
     with pytest.raises(ConfigError, match="actor_type"):
         parse_config_dict(data)

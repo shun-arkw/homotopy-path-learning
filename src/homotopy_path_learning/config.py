@@ -96,7 +96,7 @@ class PPOSettings:
 
     @property
     def attention_kwargs(self) -> dict[str, int]:
-        """Keyword arguments of ``AttentionActor`` (``d_model``, ``n_heads``, ``n_layers``, ``ff_dim``)."""
+        """Keyword arguments of ``AttentionActor`` / ``SequenceActor`` (``d_model``, ``n_heads``, ``n_layers``, ``ff_dim``)."""
 
         return {
             "d_model": self.attention_d_model,
@@ -409,8 +409,8 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
     if activation not in {"tanh", "relu"}:
         raise ConfigError("ppo.activation must be 'tanh' or 'relu'.")
     actor_type = _str(ppo_raw.get("actor_type", "mlp"), name="ppo.actor_type", nonempty=True)
-    if actor_type not in {"mlp", "attention"}:
-        raise ConfigError("ppo.actor_type must be 'mlp' or 'attention'.")
+    if actor_type not in {"mlp", "attention", "sequence"}:
+        raise ConfigError("ppo.actor_type must be 'mlp', 'attention' or 'sequence'.")
     attention_d_model = _int(ppo_raw.get("attention_d_model", 128), name="ppo.attention_d_model", positive=True)
     attention_heads = _int(ppo_raw.get("attention_heads", 4), name="ppo.attention_heads", positive=True)
     attention_layers = _int(ppo_raw.get("attention_layers", 4), name="ppo.attention_layers", positive=True)

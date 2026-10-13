@@ -149,7 +149,7 @@ def build_agent_from_checkpoint(
 
     The actor type is read from the explicit ``actor_type`` /
     ``attention_kwargs`` keys (falling back to ``ppo_config``; checkpoints
-    without either are MLP). An attention actor is rebuilt from the saved
+    without either are MLP). An attention or sequence actor is rebuilt from the saved
     ``system_spec`` dictionary and ``bezier_degree``. Its latent basis ``U`` is
     a persistent buffer (``actor_mean.basis``) of the state dict, so a
     placeholder identity basis is used for construction and the real basis is
@@ -159,7 +159,7 @@ def build_agent_from_checkpoint(
     ppo = checkpoint["ppo_config"]
     actor_type = str(checkpoint.get("actor_type", ppo.get("actor_type", "mlp")))
     extra: dict[str, Any] = {}
-    if actor_type == "attention":
+    if actor_type in ("attention", "sequence"):
         attention_kwargs = checkpoint.get("attention_kwargs") or {
             "d_model": int(ppo.get("attention_d_model", 128)),
             "n_heads": int(ppo.get("attention_heads", 4)),
@@ -168,7 +168,7 @@ def build_agent_from_checkpoint(
         }
         spec = system_spec_from_dict(checkpoint["system_spec"])
         extra = {
-            "actor_type": "attention",
+            "actor_type": actor_type,
             "attention_kwargs": {k: int(v) for k, v in attention_kwargs.items()},
             "system_spec": spec,
             "basis": np.eye(2 * int(np.count_nonzero(spec.free_coefficient_mask))),

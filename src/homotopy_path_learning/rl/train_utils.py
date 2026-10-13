@@ -34,9 +34,10 @@ from homotopy_path_learning.rl.rollout import RolloutBatch, collect_rollout
 
 
 def build_agent(config: Phase6Config, env, *, device: str | torch.device = "cpu") -> ActorCritic:
-    """Build an ``ActorCritic`` for a ``BezierPhamEnv`` ``env`` according to ``config.ppo`` (MLP or attention actor)."""
+    """Build an ``ActorCritic`` for a ``BezierPhamEnv`` ``env`` according to ``config.ppo`` (MLP, attention or sequence actor)."""
 
     ppo = config.ppo
+    structured = ppo.actor_type in ("attention", "sequence")
     return ActorCritic(
         observation_shape=tuple(env.observation_space.shape),
         action_space=env.action_space,
@@ -45,10 +46,10 @@ def build_agent(config: Phase6Config, env, *, device: str | torch.device = "cpu"
         actor_logstd_init=ppo.actor_logstd_init,
         device=device,
         actor_type=ppo.actor_type,
-        attention_kwargs=ppo.attention_kwargs if ppo.actor_type == "attention" else None,
-        system_spec=env.system_spec if ppo.actor_type == "attention" else None,
-        basis=env.parameterization.basis if ppo.actor_type == "attention" else None,
-        bezier_degree=config.path.bezier_degree if ppo.actor_type == "attention" else None,
+        attention_kwargs=ppo.attention_kwargs if structured else None,
+        system_spec=env.system_spec if structured else None,
+        basis=env.parameterization.basis if structured else None,
+        bezier_degree=config.path.bezier_degree if structured else None,
     )
 
 

@@ -11,6 +11,7 @@ import torch
 from torch import nn
 
 from homotopy_path_learning.rl.attention import AttentionActor
+from homotopy_path_learning.rl.sequence import SequenceActor
 from homotopy_path_learning.rl.distributions import SquashedActionSample, TanhDiagNormal
 from homotopy_path_learning.systems.spec import PolynomialSystemSpec
 
@@ -56,7 +57,7 @@ class ActorCritic(nn.Module):
     """Actor-critic network for one-dimensional Box observations and actions.
 
     ``actor_type='mlp'`` (default) builds the MLP actor. ``'attention'`` builds
-    an :class:`AttentionActor` (needs ``system_spec``, a square ``basis`` of
+    an :class:`AttentionActor` and ``'sequence'`` a :class:`SequenceActor` (both need ``system_spec``, a square ``basis`` of
     shape ``(2 D_free, 2 D_free)`` and ``bezier_degree``; ``attention_kwargs``
     may contain ``d_model``, ``n_heads``, ``n_layers``, ``ff_dim``). The critic
     is always an MLP.
@@ -78,8 +79,8 @@ class ActorCritic(nn.Module):
         bezier_degree: int | None = None,
     ) -> None:
         super().__init__()
-        if actor_type not in ("mlp", "attention"):
-            raise ValueError("actor_type must be 'mlp' or 'attention'.")
+        if actor_type not in ("mlp", "attention", "sequence"):
+            raise ValueError("actor_type must be 'mlp', 'attention' or 'sequence'.")
         if len(observation_shape) != 1:
             raise ValueError("observation_shape must be one-dimensional.")
         if not isinstance(action_space, gym.spaces.Box) or len(action_space.shape) != 1:
@@ -102,11 +103,12 @@ class ActorCritic(nn.Module):
             )
         else:
             if system_spec is None or basis is None or bezier_degree is None:
-                raise ValueError("actor_type='attention' requires system_spec, basis and bezier_degree.")
-            attention = AttentionActor(system_spec, basis, int(bezier_degree), **self.attention_kwargs)
+                raise ValueError(f"actor_type={actor_type!r} requires system_spec, basis and bezier_degree.")
+            actor_cls = AttentionActor if actor_type == "attention" else SequenceActor
+            attention = actor_cls(system_spec, basis, int(bezier_degree), **self.attention_kwargs)
             if attention.action_dim != action_dim or 2 * attention.free_dim != obs_dim:
                 raise ValueError(
-                    f"attention actor expects observation/action dimensions ({2 * attention.free_dim}, "
+                    f"{actor_type} actor expects observation/action dimensions ({2 * attention.free_dim}, "
                     f"{attention.action_dim}); got ({obs_dim}, {action_dim})."
                 )
             self.actor_mean = attention

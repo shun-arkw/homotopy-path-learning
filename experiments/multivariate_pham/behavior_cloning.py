@@ -82,7 +82,7 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--label-run-dir", action="append", required=True)
     parser.add_argument("--hidden-sizes", default="64,64")
-    parser.add_argument("--actor-type", choices=("mlp", "attention"), default="mlp")
+    parser.add_argument("--actor-type", choices=("mlp", "attention", "sequence"), default="mlp")
     parser.add_argument("--attention-d-model", type=int, default=128)
     parser.add_argument("--attention-heads", type=int, default=4)
     parser.add_argument("--attention-layers", type=int, default=4)
@@ -214,7 +214,7 @@ def main() -> None:
         "n_val": result.n_val,
         "hidden_sizes": list(hidden_sizes),
         "actor_type": config.ppo.actor_type,
-        "attention": config.ppo.attention_kwargs if config.ppo.actor_type == "attention" else None,
+        "attention": config.ppo.attention_kwargs if config.ppo.actor_type in ("attention", "sequence") else None,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
