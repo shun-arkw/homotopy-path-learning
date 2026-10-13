@@ -437,3 +437,15 @@ n4-d2222の1万問題で，探索seed 0〜4の5回のうち最良をとった教
 実験記録:  docs/experiments/EXP-0032-multistart-labels-10k/
 生成物:    outputs/EXP-0032/<run-id>/（実行スクリプトはoutputs/EXP-0032/scripts/）
 ```
+
+### EXP-0033：線形パスで難しい問題と到達できる上限（n5）
+
+n5-d22222とn5-d33333で，多点スタートの強い探索（$d_b=2$と$3$）により，今の設定で到達できる上限を測る．あわせて，線形パスの$J$が上位10%の問題の分布で，n5-d22222のパイプラインを行い，通常の分布で学習した方策と比べる（n5-d33333は条件つき）．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d22222-db2.yaml，exp-0028-n5-d33333-db2.yaml，
+           exp-0033-n5-d22222-db3.yaml，exp-0033-n5-d33333-db3.yaml
+実験記録:  docs/experiments/EXP-0033-hard-problems-n5/
+生成物:    外部サーバのoutputs/EXP-0033/<run-id>/（実行スクリプトはoutputs/EXP-0033/scripts/）
+```
+
