@@ -118,3 +118,52 @@ def test_finetune_step_bc_term_with_augmentation():
     with pytest.raises(ValueError):
         finetune_step(agent, obs, grad, optimizer, bc_observations=bo, bc_actions=ba, bc_weight=1.0,
                       augmentations=[(np.eye(3), np.eye(ACT))])
+
+
+def _reference_antithetic(cost_fn, means, *, sigma, n_pairs, rng, low, high):
+    """Verbatim copy of the pre-refactor sequential estimator."""
+    mu = np.array(means, dtype=np.float64, copy=True)
+    lo = np.array(low, dtype=np.float64)
+    hi = np.array(high, dtype=np.float64)
+    gradients = np.zeros_like(mu)
+    total = 0.0
+    count = 0
+    for b in range(mu.shape[0]):
+        for _ in range(n_pairs):
+            eps = rng.standard_normal(mu.shape[1])
+            plus = float(cost_fn(b, np.clip(mu[b] + sigma * eps, lo, hi)))
+            minus = float(cost_fn(b, np.clip(mu[b] - sigma * eps, lo, hi)))
+            gradients[b] += (plus - minus) * eps
+            total += plus + minus
+            count += 2
+        gradients[b] /= 2.0 * sigma * n_pairs
+    return gradients, total / count
+
+
+def test_refactored_estimator_identical_to_reference_and_split_functions():
+    from homotopy_path_learning.rl.cost_finetune import antithetic_candidates, antithetic_gradients_from_costs
+
+    means = np.random.default_rng(5).uniform(-0.9, 0.9, size=(3, ACT))
+    centers = np.random.default_rng(6).uniform(-1, 1, size=(3, ACT))
+
+    def cost(b, a):
+        return float(np.sum((a - centers[b]) ** 2) + 0.1 * np.sin(a[0]))
+
+    kwargs = dict(sigma=0.3, n_pairs=4, low=LOW, high=HIGH)
+    ref_g, ref_mean = _reference_antithetic(cost, means, rng=np.random.default_rng(11), **kwargs)
+    new_g, info = antithetic_action_gradients(cost, means, rng=np.random.default_rng(11), **kwargs)
+    np.testing.assert_array_equal(new_g, ref_g)
+    assert info["mean_cost_ratio"] == ref_mean
+
+    rng = np.random.default_rng(11)
+    eps, plus, minus = antithetic_candidates(means, rng=rng, **kwargs)
+    assert eps.shape == plus.shape == minus.shape == (3, 4, ACT)
+    plus_costs = np.array([[cost(b, plus[b, p]) for p in range(4)] for b in range(3)])
+    minus_costs = np.array([[cost(b, minus[b, p]) for p in range(4)] for b in range(3)])
+    g2, info2 = antithetic_gradients_from_costs(eps, plus_costs, minus_costs, sigma=0.3)
+    np.testing.assert_array_equal(g2, ref_g)
+    assert info2 == info
+    # The generator is left in the same state as after the sequential estimator.
+    seq_rng = np.random.default_rng(11)
+    antithetic_action_gradients(cost, means, rng=seq_rng, **kwargs)
+    assert rng.standard_normal() == seq_rng.standard_normal()

@@ -31,7 +31,14 @@ from homotopy_path_learning.rl.checkpoint import (
     save_checkpoint,
     validate_checkpoint,
 )
-from homotopy_path_learning.rl.cost_finetune import antithetic_action_gradients, finetune_step
+from homotopy_path_learning.evaluation.seeds import read_seed_list, seed_file_record
+from homotopy_path_learning.rl.cost_finetune import (
+    antithetic_action_gradients,
+    antithetic_candidates,
+    antithetic_gradients_from_costs,
+    finetune_step,
+)
+from homotopy_path_learning.rl.parallel import EnvPool
 from homotopy_path_learning.rl.train_utils import (
     collect_metadata,
     git_value,
@@ -103,6 +110,17 @@ def main() -> None:
     parser.add_argument("--bc-batch-size", type=int, default=256)
     parser.add_argument("--train-seed", type=int, default=6000000)
     parser.add_argument("--val-seed", type=int, default=5000000)
+    parser.add_argument(
+        "--train-seeds-file",
+        default=None,
+        help="Seed-list file; problem b of iteration k (1-based) uses element (k-1)*batch_problems+b. Replaces --train-seed.",
+    )
+    parser.add_argument(
+        "--val-seeds-file",
+        default=None,
+        help="Seed-list file; the first --val-instances entries are the validation seeds. Replaces --val-seed.",
+    )
+    parser.add_argument("--workers", type=int, default=1, help="Worker processes for tracking (1 = sequential).")
     parser.add_argument("--val-instances", type=int, default=200)
     parser.add_argument("--val-interval", type=int, default=50)
     parser.add_argument("--seed", type=int, default=0)
@@ -119,6 +137,26 @@ def main() -> None:
         parser.error("--label-run-dir is required when --bc-weight > 0.")
     if min(args.iterations, args.batch_problems, args.pairs, args.val_instances, args.val_interval, args.bc_batch_size) <= 0:
         parser.error("iteration, batch, pair, validation and interval counts must be positive.")
+    if args.workers < 1:
+        parser.error("--workers must be at least 1.")
+    train_seeds = val_seeds = None
+    if args.train_seeds_file is not None:
+        train_seeds = read_seed_list(args.train_seeds_file)
+        needed = args.iterations * args.batch_problems
+        if len(train_seeds) < needed:
+            parser.error(f"--train-seeds-file has {len(train_seeds)} seeds; iterations*batch_problems = {needed} are needed.")
+    if args.val_seeds_file is not None:
+        val_seeds = read_seed_list(args.val_seeds_file)
+        if len(val_seeds) < args.val_instances:
+            parser.error(f"--val-seeds-file has {len(val_seeds)} seeds; --val-instances = {args.val_instances} are needed.")
+        val_seeds = val_seeds[: args.val_instances]
+
+    def train_problem_seed(iteration: int, b: int) -> int:
+        index = (iteration - 1) * args.batch_problems + b
+        return train_seeds[index] if train_seeds is not None else args.train_seed + index
+
+    def val_problem_seed(i: int) -> int:
+        return val_seeds[i] if val_seeds is not None else args.val_seed + i
     require_clean_git(allow_dirty=args.allow_dirty)
     base = load_config(args.config)
     base = with_latent_dim(base, resolve_latent_dim(base, args.latent_dim))
@@ -154,6 +192,7 @@ def main() -> None:
     generator = torch.Generator().manual_seed(int(args.seed))
 
     env = build_env(config)
+    pool = EnvPool(config, args.workers) if args.workers > 1 else None
     try:
         spec = build_system_spec(config)
         validate_checkpoint(
@@ -185,18 +224,24 @@ def main() -> None:
                 return predicted_actions(agent, torch.as_tensor(observations, dtype=torch.float32, device=args.device)).cpu().numpy().astype(np.float64)
 
         val_contexts, val_obs = [], []
-        for i in range(args.val_instances):
-            observation, _ = env.reset(seed=args.val_seed + i)
-            val_contexts.append(env.current_episode_context())
-            val_obs.append(np.asarray(observation, dtype=np.float32))
+        if pool is not None:
+            val_obs, val_contexts = pool.reset_many([val_problem_seed(i) for i in range(args.val_instances)])
+        else:
+            for i in range(args.val_instances):
+                observation, _ = env.reset(seed=val_problem_seed(i))
+                val_contexts.append(env.current_episode_context())
+                val_obs.append(np.asarray(observation, dtype=np.float32))
         val_obs_array = np.stack(val_obs)
         val_linear = np.array([float(c.linear_cost.mean) for c in val_contexts])
 
         def validate() -> tuple[float, float]:
             actions = policy_actions(val_obs_array)
-            costs = np.array(
-                [float(env.evaluate_action_against_context(c, a).tracking_cost.mean) for c, a in zip(val_contexts, actions)]
-            )
+            if pool is not None:
+                costs = np.array(pool.mean_costs(val_contexts, list(actions)))
+            else:
+                costs = np.array(
+                    [float(env.evaluate_action_against_context(c, a).tracking_cost.mean) for c, a in zip(val_contexts, actions)]
+                )
             return (float(costs.mean()) - float(val_linear.mean())) / float(val_linear.mean()) * 100.0, float(np.mean(costs < val_linear))
 
         val_rows = []
@@ -208,21 +253,46 @@ def main() -> None:
         timer = time.time()
         for iteration in range(1, args.iterations + 1):
             contexts, observations = [], []
-            for b in range(args.batch_problems):
-                observation, _ = env.reset(seed=args.train_seed + (iteration - 1) * args.batch_problems + b)
-                contexts.append(env.current_episode_context())
-                observations.append(np.asarray(observation, dtype=np.float32))
+            if pool is not None:
+                observations, contexts = pool.reset_many(
+                    [train_problem_seed(iteration, b) for b in range(args.batch_problems)]
+                )
+            else:
+                for b in range(args.batch_problems):
+                    observation, _ = env.reset(seed=train_problem_seed(iteration, b))
+                    contexts.append(env.current_episode_context())
+                    observations.append(np.asarray(observation, dtype=np.float32))
             observations = np.stack(observations)
             means = policy_actions(observations)
 
-            def cost_fn(b: int, action: np.ndarray) -> float:
-                return float(env.evaluate_action_against_context(contexts[b], action).tracking_cost.mean) / float(
-                    contexts[b].linear_cost.mean
+            if pool is not None:
+                # Candidates are drawn first (same RNG order as the sequential
+                # estimator), then all (context, action) pairs are tracked.
+                eps, plus, minus = antithetic_candidates(
+                    means, sigma=args.sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
                 )
+                items_contexts, items_actions = [], []
+                for b in range(args.batch_problems):
+                    for p in range(args.pairs):
+                        items_contexts += [contexts[b], contexts[b]]
+                        items_actions += [plus[b, p], minus[b, p]]
+                raw = np.array(pool.mean_costs(items_contexts, items_actions)).reshape(
+                    args.batch_problems, args.pairs, 2
+                )
+                linear = np.array([float(c.linear_cost.mean) for c in contexts])[:, None]
+                gradients, info = antithetic_gradients_from_costs(
+                    eps, raw[:, :, 0] / linear, raw[:, :, 1] / linear, sigma=args.sigma
+                )
+            else:
 
-            gradients, info = antithetic_action_gradients(
-                cost_fn, means, sigma=args.sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
-            )
+                def cost_fn(b: int, action: np.ndarray) -> float:
+                    return float(env.evaluate_action_against_context(contexts[b], action).tracking_cost.mean) / float(
+                        contexts[b].linear_cost.mean
+                    )
+
+                gradients, info = antithetic_action_gradients(
+                    cost_fn, means, sigma=args.sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
+                )
             bc_kwargs = {}
             if labels is not None:
                 pick = rng.integers(0, labels[0].shape[0], size=args.bc_batch_size)
@@ -285,6 +355,8 @@ def main() -> None:
             env=env,
         )
     finally:
+        if pool is not None:
+            pool.close()
         env.close()
     metadata["finetune"] = {
         "init_run_dir": args.init_run_dir,
@@ -304,10 +376,15 @@ def main() -> None:
         "val_instances": args.val_instances,
         "val_interval": args.val_interval,
         "seed": args.seed,
+        "workers": args.workers,
         "best_iteration": best_iteration,
         "best_val_delta_j": best_delta,
         "initial_val_delta_j": initial_delta,
     }
+    if args.train_seeds_file is not None:
+        metadata["finetune"]["train_seeds_file"] = seed_file_record(args.train_seeds_file)
+    if args.val_seeds_file is not None:
+        metadata["finetune"]["val_seeds_file"] = seed_file_record(args.val_seeds_file)
     write_metadata(run_dir / "metadata.json", metadata)
 
     eval_rows = evaluate_checkpoint(

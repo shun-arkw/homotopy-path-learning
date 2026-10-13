@@ -18,8 +18,7 @@ from homotopy_path_learning.rl.behavior_cloning import predicted_actions
 from homotopy_path_learning.rl.networks import ActorCritic
 
 
-def antithetic_action_gradients(
-    cost_fn: Callable[[int, NDArray[np.float64]], float],
+def antithetic_candidates(
     means: ArrayLike,
     *,
     sigma: float,
@@ -27,17 +26,15 @@ def antithetic_action_gradients(
     rng: np.random.Generator,
     low: ArrayLike,
     high: ArrayLike,
-) -> tuple[NDArray[np.float64], dict[str, float]]:
-    """Estimate ``d cost / d action`` per problem by antithetic finite differences.
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Draw the antithetic candidate actions for every problem.
 
-    ``means`` has shape ``(B, A)``. For problem ``b`` and pair ``p`` a noise
-    ``eps ~ N(0, I_A)`` is drawn and ``cost_fn(b, a)`` is evaluated at
-    ``a+- = clip(mean_b +- sigma * eps, low, high)`` (``low``/``high`` have shape
-    ``(A,)``). The estimate is
-    ``g_b = 1/(2 sigma P) sum_p (cost(a+) - cost(a-)) eps_p``. Returns the
-    ``(B, A)`` float64 gradients and an info dict with ``mean_cost_ratio`` (over
-    all ``2 P B`` evaluations), ``mean_grad_norm`` and ``n_evaluations``.
-    Inputs are not modified.
+    ``means`` has shape ``(B, A)``; ``low``/``high`` have shape ``(A,)``. The
+    generator is consumed in the order problem ``b``, pair ``p``
+    (``eps = rng.standard_normal(A)``), exactly as the sequential estimator.
+    Returns ``(eps, plus, minus)``, each float64 of shape ``(B, P, A)``, with
+    ``plus = clip(mean + sigma * eps, low, high)`` and
+    ``minus = clip(mean - sigma * eps, low, high)``. Inputs are not modified.
     """
 
     mu = np.array(means, dtype=np.float64, copy=True)
@@ -57,31 +54,99 @@ def antithetic_action_gradients(
         raise ValueError(f"n_pairs must be a positive integer, got {n_pairs!r}.")
     if not isinstance(rng, np.random.Generator):
         raise TypeError("rng must be a numpy.random.Generator.")
-    if not callable(cost_fn):
-        raise TypeError("cost_fn must be callable.")
     sigma = float(sigma)
     pairs = int(n_pairs)
 
-    gradients = np.zeros_like(mu)
+    batch, dim = mu.shape
+    eps = np.zeros((batch, pairs, dim), dtype=np.float64)
+    plus = np.zeros_like(eps)
+    minus = np.zeros_like(eps)
+    for b in range(batch):
+        for p in range(pairs):
+            eps[b, p] = rng.standard_normal(dim)
+            plus[b, p] = np.clip(mu[b] + sigma * eps[b, p], lo, hi)
+            minus[b, p] = np.clip(mu[b] - sigma * eps[b, p], lo, hi)
+    return eps, plus, minus
+
+
+def antithetic_gradients_from_costs(
+    eps: ArrayLike,
+    plus_costs: ArrayLike,
+    minus_costs: ArrayLike,
+    *,
+    sigma: float,
+) -> tuple[NDArray[np.float64], dict[str, float]]:
+    """Compute the antithetic gradient estimate from candidate costs.
+
+    ``eps`` has shape ``(B, P, A)``; ``plus_costs`` and ``minus_costs`` have
+    shape ``(B, P)``. Returns the same ``(gradients, info)`` as
+    :func:`antithetic_action_gradients`, accumulating in the same order.
+    """
+
+    e = np.asarray(eps, dtype=np.float64)
+    plus = np.asarray(plus_costs, dtype=np.float64)
+    minus = np.asarray(minus_costs, dtype=np.float64)
+    if e.ndim != 3 or plus.shape != e.shape[:2] or minus.shape != e.shape[:2]:
+        raise ValueError("eps must have shape (B, P, A) and the costs shape (B, P).")
+    sigma = float(sigma)
+    batch, pairs, dim = e.shape
+    gradients = np.zeros((batch, dim), dtype=np.float64)
     total = 0.0
     count = 0
-    for b in range(mu.shape[0]):
-        for _ in range(pairs):
-            eps = rng.standard_normal(mu.shape[1])
-            plus = float(cost_fn(b, np.clip(mu[b] + sigma * eps, lo, hi)))
-            minus = float(cost_fn(b, np.clip(mu[b] - sigma * eps, lo, hi)))
-            if not (np.isfinite(plus) and np.isfinite(minus)):
+    for b in range(batch):
+        for p in range(pairs):
+            plus_cost = float(plus[b, p])
+            minus_cost = float(minus[b, p])
+            if not (np.isfinite(plus_cost) and np.isfinite(minus_cost)):
                 raise ValueError("cost_fn returned a non-finite value.")
-            gradients[b] += (plus - minus) * eps
-            total += plus + minus
+            gradients[b] += (plus_cost - minus_cost) * e[b, p]
+            total += plus_cost + minus_cost
             count += 2
         gradients[b] /= 2.0 * sigma * pairs
     info = {
         "mean_cost_ratio": total / count if count else float("nan"),
-        "mean_grad_norm": float(np.mean(np.linalg.norm(gradients, axis=1))) if mu.shape[0] else 0.0,
+        "mean_grad_norm": float(np.mean(np.linalg.norm(gradients, axis=1))) if batch else 0.0,
         "n_evaluations": float(count),
     }
     return gradients, info
+
+
+def antithetic_action_gradients(
+    cost_fn: Callable[[int, NDArray[np.float64]], float],
+    means: ArrayLike,
+    *,
+    sigma: float,
+    n_pairs: int,
+    rng: np.random.Generator,
+    low: ArrayLike,
+    high: ArrayLike,
+) -> tuple[NDArray[np.float64], dict[str, float]]:
+    """Estimate ``d cost / d action`` per problem by antithetic finite differences.
+
+    ``means`` has shape ``(B, A)``. For problem ``b`` and pair ``p`` a noise
+    ``eps ~ N(0, I_A)`` is drawn and ``cost_fn(b, a)`` is evaluated at
+    ``a+- = clip(mean_b +- sigma * eps, low, high)`` (``low``/``high`` have shape
+    ``(A,)``). The estimate is
+    ``g_b = 1/(2 sigma P) sum_p (cost(a+) - cost(a-)) eps_p``. Returns the
+    ``(B, A)`` float64 gradients and an info dict with ``mean_cost_ratio`` (over
+    all ``2 P B`` evaluations), ``mean_grad_norm`` and ``n_evaluations``.
+    Inputs are not modified. This is :func:`antithetic_candidates` followed by
+    sequential ``cost_fn`` calls and :func:`antithetic_gradients_from_costs`.
+    """
+
+    if not callable(cost_fn):
+        raise TypeError("cost_fn must be callable.")
+    eps, plus, minus = antithetic_candidates(
+        means, sigma=sigma, n_pairs=n_pairs, rng=rng, low=low, high=high
+    )
+    batch, pairs, _ = eps.shape
+    plus_costs = np.zeros((batch, pairs), dtype=np.float64)
+    minus_costs = np.zeros((batch, pairs), dtype=np.float64)
+    for b in range(batch):
+        for p in range(pairs):
+            plus_costs[b, p] = float(cost_fn(b, plus[b, p].copy()))
+            minus_costs[b, p] = float(cost_fn(b, minus[b, p].copy()))
+    return antithetic_gradients_from_costs(eps, plus_costs, minus_costs, sigma=sigma)
 
 
 def finetune_step(
@@ -159,4 +224,9 @@ def finetune_step(
     }
 
 
-__all__ = ["antithetic_action_gradients", "finetune_step"]
+__all__ = [
+    "antithetic_action_gradients",
+    "antithetic_candidates",
+    "antithetic_gradients_from_costs",
+    "finetune_step",
+]

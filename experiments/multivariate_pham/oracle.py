@@ -25,6 +25,7 @@ from homotopy_path_learning.evaluation.oracle import (
     with_latent_dim,
 )
 from homotopy_path_learning.evaluation.evaluator import evaluate_policy_rows
+from homotopy_path_learning.evaluation.seeds import read_seed_list, seed_file_record
 from homotopy_path_learning.evaluation.metrics import EVALUATION_FIELDS
 from homotopy_path_learning.rl.train_utils import (
     collect_metadata,
@@ -131,6 +132,11 @@ def main() -> None:
     parser.add_argument("--search-seed", type=int, default=0)
     parser.add_argument("--num-instances", type=int, default=None)
     parser.add_argument("--evaluation-seed", type=int, default=None)
+    parser.add_argument(
+        "--target-seeds-file",
+        default=None,
+        help="Per-instance mode: seed-list file (one seed per line); excludes --evaluation-seed and --num-instances.",
+    )
     parser.add_argument("--mode", choices=["per-instance", "constant"], default="per-instance")
     parser.add_argument("--train-seed", type=int, default=None, help="Constant mode: base seed of training targets.")
     parser.add_argument("--num-train", type=int, default=200, help="Constant mode: number of training targets.")
@@ -142,6 +148,13 @@ def main() -> None:
 
     if args.mode == "constant" and args.train_seed is None:
         parser.error("--train-seed is required in constant mode.")
+    target_seeds = None
+    if args.target_seeds_file is not None:
+        if args.mode != "per-instance":
+            parser.error("--target-seeds-file is only supported in per-instance mode.")
+        if args.evaluation_seed is not None or args.num_instances is not None:
+            parser.error("--target-seeds-file cannot be combined with --evaluation-seed or --num-instances.")
+        target_seeds = read_seed_list(args.target_seeds_file)
     require_clean_git(allow_dirty=args.allow_dirty)
     source_config = load_config(args.config)
     latent_dim = resolve_latent_dim(source_config, args.latent_dim)
@@ -169,6 +182,7 @@ def main() -> None:
         search_seed=args.search_seed,
         num_instances=args.num_instances,
         evaluation_seed=args.evaluation_seed,
+        target_seeds=target_seeds,
     )
     write_rows(run_dir / "oracle.csv", result.rows, fieldnames=ORACLE_FIELDS)
     np.save(run_dir / "oracle_actions.npy", result.best_actions)
@@ -208,6 +222,8 @@ def main() -> None:
         "search_rng_rule": "default_rng([search_seed, target_seed])",
         "compare_run_dirs": list(args.compare_run_dir),
     }
+    if args.target_seeds_file is not None:
+        metadata["oracle"]["target_seeds_file"] = seed_file_record(args.target_seeds_file)
     write_metadata(run_dir / "metadata.json", metadata)
     refresh_metadata_output_files(run_dir)
 

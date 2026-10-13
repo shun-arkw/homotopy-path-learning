@@ -157,3 +157,39 @@ outputs/EXP-XXXX/<run-id>/
 ## 8．attention方策
 
 線形項と定数項のみのサポートに対しては，`ppo.actor_type: attention`（任意の項目，既定は`mlp`）で置換同変なTransformerのactorを選べる．設計は`attention_policy.md`に従う．推論時間の計測は`experiments/multivariate_pham/timing.py`，複数runの比較は`compare_runs.py`で行う．
+
+## 9．問題のseedリストと微調整の並列化（EXP-0033）
+
+### 9.1．seedリストのファイル
+
+- 書式：1行に1つの整数（目的系のseed）．空行と`#`で始まる行は無視する．重複と負の値は拒否する．順序はファイルのとおりに保つ．
+- `oracle.py`（per-instanceモード）と`evaluate.py`に`--target-seeds-file`を追加する．`--evaluation-seed`・`--num-instances`とは同時に指定できない．`instance_id`はリスト内の位置（0始まり）とする．`target_seed`はファイルの値である．
+- `finetune.py`に`--train-seeds-file`と`--val-seeds-file`を追加する．
+  - 反復$k$（1始まり）の$b$番目の訓練問題は，リストの$(k-1)K+b$番目の要素とする．リストが$\text{iterations}\times K$より短ければ，開始前にエラーにする．
+  - 検証問題は，リストの先頭`--val-instances`個とする．
+  - 指定しなければ，従来どおり`--train-seed`・`--val-seed`からの連番を使う．
+- 使ったファイルのパスとSHA-256を，`metadata.json`に記録する．
+- seedリストを使わない場合の動作と出力は，従来と完全に同じとする．
+
+### 9.2．線形パスの選別
+
+- `experiments/multivariate_pham/screen_linear.py`を新設する．
+  - `--start-seed`から`--num-candidates`個の連続したseedについて，線形パスだけを追跡する．
+  - 出力は`linear_costs.csv`で，列は`target_seed, linear_cost, linear_success, accepted_steps, rejected_steps`とする．
+  - 出力先は他のスクリプトと同じrunディレクトリで，`config.yaml`と`metadata.json`も書く．
+- `experiments/multivariate_pham/select_hard_seeds.py`を新設する．
+  - 入力は複数の選別run（seedが重ならないこと）である．
+  - seedの昇順で，先頭`--calibration`個から`--quantile`分位点のしきい値を求める．
+  - 残りの候補のうち，線形パスの追跡に成功し，$J_{\mathrm{lin}}\ge$しきい値のseedを昇順に並べる．
+  - それを`--split name:count`の順に先頭から割り当て，`name.txt`として書く．例：`test:500 val:200 labels:10000 train:64000`．
+  - 足りない場合はエラーにする．しきい値と各分割の範囲を`selection.json`に記録する．
+
+### 9.3．微調整の並列化
+
+- `finetune.py`に`--workers W`（既定1）を追加する．$W=1$では従来の逐次の実装を使う．
+- $W>1$では，$W$個のワーカープロセスを使う．
+  - 各ワーカーは自分の環境（Juliaのバックエンドを含む）を持つ．
+  - 訓練の各反復では，各問題の$2P$個の候補行動を作る．乱数の消費順序は逐次の場合と同じにする．その後，（文脈，行動）の組をワーカーで評価する．
+  - 検証の評価も，ワーカーで並列に行う．
+- 並列の有無で，すべての出力の数値が完全に一致しなければならない．出力は，検証の推移，各反復の指標（経過時間を除く），最良の反復，チェックポイントの重みである．
+- 推定量（`antithetic_action_gradients`）は，候補の生成とコストからの勾配の計算に分ける．逐次の場合の結果は変えない．

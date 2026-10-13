@@ -246,6 +246,7 @@ def run_oracle(
     num_instances: int | None = None,
     evaluation_seed: int | None = None,
     backend: object | None = None,
+    target_seeds: Sequence[int] | None = None,
 ) -> OracleRun:
     """Search the best latent action separately for each evaluation instance.
 
@@ -257,13 +258,22 @@ def run_oracle(
     ``i`` is ``default_rng([search_seed, target_seed])``. ``evaluation_seed``,
     when given, replaces ``config.evaluation.seed`` as the base of the instance
     seeds ``seed + i``. ``backend`` is passed
-    to :func:`build_env` and is intended for tests.
+    to :func:`build_env` and is intended for tests. ``target_seeds``, when
+    given, is the explicit ordered list of target seeds (``instance_id`` is the
+    position in the list) and excludes ``num_instances``/``evaluation_seed``.
     """
 
-    seeds = fixed_evaluation_seeds(
-        seed=config.evaluation.seed if evaluation_seed is None else int(evaluation_seed),
-        num_instances=config.evaluation.num_instances if num_instances is None else num_instances,
-    )
+    if target_seeds is not None:
+        if num_instances is not None or evaluation_seed is not None:
+            raise ValueError("target_seeds cannot be combined with num_instances or evaluation_seed.")
+        seeds = [int(seed) for seed in target_seeds]
+        if not seeds:
+            raise ValueError("target_seeds must not be empty.")
+    else:
+        seeds = fixed_evaluation_seeds(
+            seed=config.evaluation.seed if evaluation_seed is None else int(evaluation_seed),
+            num_instances=config.evaluation.num_instances if num_instances is None else num_instances,
+        )
     env = build_env(config, backend=backend)
     rows: list[dict[str, Any]] = []
     observations: list[np.ndarray] = []

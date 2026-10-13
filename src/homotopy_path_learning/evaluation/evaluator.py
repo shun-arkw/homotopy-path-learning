@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import torch
@@ -79,13 +79,26 @@ def evaluate_policy_rows(
     num_instances: int | None = None,
     evaluation_seed: int | None = None,
     random_action_seed: int | None = None,
+    target_seeds: Sequence[int] | None = None,
 ) -> list[dict[str, object]]:
-    """Evaluate Linear, RandomBezier, and/or LearnedBezier on fixed target seeds."""
+    """Evaluate Linear, RandomBezier, and/or LearnedBezier on fixed target seeds.
 
-    seeds = fixed_evaluation_seeds(
-        seed=config.evaluation.seed if evaluation_seed is None else evaluation_seed,
-        num_instances=config.evaluation.num_instances if num_instances is None else num_instances,
-    )
+    ``target_seeds``, when given, is the explicit ordered list of target seeds
+    (``instance_id`` is the position in the list); it excludes
+    ``num_instances`` and ``evaluation_seed``.
+    """
+
+    if target_seeds is not None:
+        if num_instances is not None or evaluation_seed is not None:
+            raise ValueError("target_seeds cannot be combined with num_instances or evaluation_seed.")
+        seeds = [int(seed) for seed in target_seeds]
+        if not seeds:
+            raise ValueError("target_seeds must not be empty.")
+    else:
+        seeds = fixed_evaluation_seeds(
+            seed=config.evaluation.seed if evaluation_seed is None else evaluation_seed,
+            num_instances=config.evaluation.num_instances if num_instances is None else num_instances,
+        )
     random_rng = np.random.default_rng(
         config.evaluation.random_action_seed if random_action_seed is None else random_action_seed
     )
@@ -223,8 +236,12 @@ def evaluate_checkpoint(
     num_instances: int | None = None,
     evaluation_seed: int | None = None,
     device: torch.device | str = "cpu",
+    target_seeds: Sequence[int] | None = None,
 ) -> list[dict[str, object]]:
-    """Evaluate Linear and LearnedBezier and write evaluation CSV."""
+    """Evaluate Linear and LearnedBezier and write evaluation CSV.
+
+    ``target_seeds`` optionally replaces the contiguous evaluation seeds.
+    """
 
     agent = load_policy_for_config(checkpoint_path=checkpoint_path, config=config, device=device)
     rows = evaluate_policy_rows(
@@ -235,6 +252,7 @@ def evaluate_checkpoint(
         methods=("Linear", "LearnedBezier"),
         num_instances=num_instances,
         evaluation_seed=evaluation_seed,
+        target_seeds=target_seeds,
     )
     write_rows(output_path, rows, fieldnames=EVALUATION_FIELDS)
     return rows
