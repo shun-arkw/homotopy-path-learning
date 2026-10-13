@@ -387,3 +387,13 @@ n2-d33（$d_b=3$）で，MLPの標準パイプラインと同じ教師データ�
 実験記録:  docs/experiments/EXP-0027-finetune-without-bc/
 生成物:    outputs/EXP-0027/<run-id>/（実行スクリプトはoutputs/EXP-0027/scripts/）
 ```
+
+### EXP-0028：n5系の予備調査と教師データの生成
+
+n5-d22222とn5-d33333（$d_b=2$）で，線形パスの追跡の安定性とoracleの改善余地を調べ，条件を満たせば教師データ1万件を生成する．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d{22222,33333}-db2.yaml
+実験記録:  docs/experiments/EXP-0028-n5-prelim-labels/
+生成物:    外部サーバのoutputs/EXP-0028/<run-id>/（実行スクリプトはoutputs/EXP-0028/scripts/）
+```
