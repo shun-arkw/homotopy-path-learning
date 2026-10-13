@@ -33,6 +33,7 @@
 | EXP-0027 | 教師あり学習なしでのattention方策の微調整（n4-d2222） | 実行中（`EXP-0027-finetune-without-bc/`）．本ロードマップ外で追加 |
 | EXP-0028 | n5系の予備調査と教師データの生成 | 実行中（`EXP-0028-n5-prelim-labels/`）．本ロードマップ外で追加 |
 | EXP-0029 | n5-d33333でのoracleの探索の強化 | 実行中（`EXP-0029-oracle-search-n5-d33333/`）．本ロードマップ外で追加 |
+| EXP-0030 | 教師データの質と量（多点スタートのoracle，n4-d2222） | 実行中（`EXP-0030-label-quality-vs-quantity/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 

@@ -407,3 +407,13 @@ n5-d33333の20問題で，多点スタート（5回）と長い探索（予算10
 実験記録:  docs/experiments/EXP-0029-oracle-search-n5-d33333/
 生成物:    outputs/EXP-0029/<run-id>/（実行スクリプトはoutputs/EXP-0029/scripts/）
 ```
+
+### EXP-0030：教師データの質と量（多点スタートのoracle，n4-d2222）
+
+多点スタートのoracleで作った2000件，1回の探索の2000件，1回の探索の1万件の教師データで，attention方策の教師あり学習と微調整の結果を比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml
+実験記録:  docs/experiments/EXP-0030-label-quality-vs-quantity/
+生成物:    outputs/EXP-0030/<run-id>/（実行スクリプトはoutputs/EXP-0030/scripts/）
+```
