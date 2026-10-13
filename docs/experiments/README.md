@@ -449,3 +449,13 @@ n5-d22222とn5-d33333で，多点スタートの強い探索（$d_b=2$と$3$）�
 生成物:    外部サーバのoutputs/EXP-0033/<run-id>/（実行スクリプトはoutputs/EXP-0033/scripts/）
 ```
 
+### EXP-0034：n5-d33333のパイプライン（attention）
+
+変数5つ，次数3の系（n5-d33333）で，EXP-0028の教師データ1万件からattention方策の教師あり学習と微調整まで通し，パイプラインが通用するかを確かめる．EXP-0033の難しい問題の分布との比較の基準にもなる．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d33333-db2.yaml
+実験記録:  docs/experiments/EXP-0034-n5-d33333-pipeline/
+生成物:    外部サーバのoutputs/EXP-0034/<run-id>/（実行スクリプトはoutputs/EXP-0034/scripts/）
+```
+

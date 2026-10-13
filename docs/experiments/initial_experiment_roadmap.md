@@ -37,6 +37,7 @@
 | EXP-0031 | n5-d22222のパイプライン（MLPとattention） | 実行中（`EXP-0031-n5-d22222-pipeline/`）．本ロードマップ外で追加 |
 | EXP-0032 | 多点スタートの教師データ1万件（n4-d2222） | 計画中（`EXP-0032-multistart-labels-10k/`）．本ロードマップ外で追加 |
 | EXP-0033 | 線形パスで難しい問題と到達できる上限（n5） | 計画中（`EXP-0033-hard-problems-n5/`）．本ロードマップ外で追加 |
+| EXP-0034 | n5-d33333のパイプライン（attention） | 計画中（`EXP-0034-n5-d33333-pipeline/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 
