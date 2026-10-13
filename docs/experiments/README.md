@@ -427,3 +427,13 @@ n5-d22222（$d_b=2$）で，EXP-0028の教師データを使って，MLPとatten
 実験記録:  docs/experiments/EXP-0031-n5-d22222-pipeline/
 生成物:    外部サーバのoutputs/EXP-0031/<run-id>/（実行スクリプトはoutputs/EXP-0031/scripts/）
 ```
+
+### EXP-0032：多点スタートの教師データ1万件（n4-d2222）
+
+n4-d2222の1万問題で，探索seed 0〜4の5回のうち最良をとった教師データを作り，attention方策の教師あり学習と微調整の結果を，1回の探索の1万件（EXP-0020）と比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml
+実験記録:  docs/experiments/EXP-0032-multistart-labels-10k/
+生成物:    outputs/EXP-0032/<run-id>/（実行スクリプトはoutputs/EXP-0032/scripts/）
+```
