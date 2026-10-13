@@ -397,3 +397,13 @@ n5-d22222とn5-d33333（$d_b=2$）で，線形パスの追跡の安定性とorac
 実験記録:  docs/experiments/EXP-0028-n5-prelim-labels/
 生成物:    外部サーバのoutputs/EXP-0028/<run-id>/（実行スクリプトはoutputs/EXP-0028/scripts/）
 ```
+
+### EXP-0029：n5-d33333でのoracleの探索の強化
+
+n5-d33333の20問題で，多点スタート（5回）と長い探索（予算10000）により，oracleの値がどれだけ改善するかを調べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d33333-db2.yaml
+実験記録:  docs/experiments/EXP-0029-oracle-search-n5-d33333/
+生成物:    outputs/EXP-0029/<run-id>/（実行スクリプトはoutputs/EXP-0029/scripts/）
+```
