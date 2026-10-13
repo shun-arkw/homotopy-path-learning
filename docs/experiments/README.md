@@ -261,3 +261,57 @@ n3-d222で，ベジェ次数$d_b$を2と4にしたときのフル潜在oracleを
 実験記録:  docs/experiments/EXP-0016-bezier-degree-pipeline/
 生成物:    outputs/EXP-0016/<run-id>/（実行スクリプトはoutputs/EXP-0016/scripts/）
 ```
+
+### EXP-0017：n4-d2222での$d_b=2$の標準パイプライン
+
+n4-d2222で，ベジェ次数$d_b=2$のフル潜在oracleを調べ，標準パイプライン（ラベル，拡張つきBC，微調整）を実行して$d_b=3$（EXP-0014）と比べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml
+実験CLI:   experiments/multivariate_pham/oracle.py
+           experiments/multivariate_pham/behavior_cloning.py
+           experiments/multivariate_pham/finetune.py
+実験記録:  docs/experiments/EXP-0017-n4-d2222-db2/
+生成物:    outputs/EXP-0017/<run-id>/（実行スクリプトはoutputs/EXP-0017/scripts/）
+```
+
+### EXP-0018：n4-d3333のoracle改善余地の予備調査（$d_b=2$と$d_b=3$）
+
+n4-d3333（81パス）で，フル潜在oracleによる改善余地を$d_b=2$と$d_b=3$で調べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db{2,3}.yaml
+実験CLI:   experiments/multivariate_pham/oracle.py
+実験記録:  docs/experiments/EXP-0018-n4-d3333-prelim/
+生成物:    outputs/EXP-0018/<run-id>/（実行スクリプトはoutputs/EXP-0018/scripts/）
+```
+
+### EXP-0019：教師データの量とMLPの教師あり学習（n4-d2222，$d_b=2$）
+
+教師データを1万件から3万件に増やすと，n4-d2222でのMLPの教師あり学習が改善するかを調べる．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml（EXP-0017と同じ）
+実験CLI:   experiments/multivariate_pham/oracle.py
+           experiments/multivariate_pham/behavior_cloning.py
+           experiments/multivariate_pham/compare_runs.py
+実験記録:  docs/experiments/EXP-0019-n4-bc-data-scaling/
+生成物:    outputs/EXP-0019/<run-id>/（実行スクリプトはoutputs/EXP-0019/scripts/）
+```
+
+### EXP-0020：置換に同変なattention方策とMLPの比較（n4-d2222，$d_b=2$）
+
+ADR-0007の第1段階のattention方策を，EXP-0017と同じ教師データ・学習量で学習・微調整し，新しい試験問題（評価seed 41000〜41499）でMLPと比べる．推論時間も計測する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0017-n4-d2222-db2.yaml（CLIで--actor-type attention）
+実装設計:  docs/design/implementation/attention_policy.md
+実験CLI:   experiments/multivariate_pham/oracle.py
+           experiments/multivariate_pham/behavior_cloning.py
+           experiments/multivariate_pham/finetune.py
+           experiments/multivariate_pham/evaluate.py
+           experiments/multivariate_pham/compare_runs.py
+           experiments/multivariate_pham/timing.py
+実験記録:  docs/experiments/EXP-0020-attention-policy/
+生成物:    outputs/EXP-0020/<run-id>/（実行スクリプトはoutputs/EXP-0020/scripts/）
+```
