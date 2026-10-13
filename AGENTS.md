@@ -118,6 +118,32 @@ If the container cannot be accessed，stop and report that the authoritative
 tests were not executed．Do not treat tests from another Julia environment as
 the authoritative result．
 
+### Running experiments on remote servers
+
+Experiments may also run on other machines (for example, a multi-GPU server)
+that use the same Docker image. Machine-specific details (host names,
+addresses, user names, paths) must not be committed to this repository.
+
+- Make and commit all code changes only in the main working environment, and
+  push them. Do not edit or commit code on a remote server.
+- Immediately before running an experiment on a remote server, run
+  `git pull --ff-only` there. Then confirm both of the following:
+  - `git rev-parse HEAD` matches the pushed commit of the main environment.
+  - The working tree is clean.
+- On a new server or a newly created container, first run the Python and
+  Julia tests. Then re-evaluate a few problems of an existing evaluation and
+  confirm that the accepted and rejected step counts match exactly.
+- Set the thread environment variables to 1 as above. Assign GPUs to
+  processes with `CUDA_VISIBLE_DEVICES`.
+- Assign experiment IDs only in the main environment, and add the experiment
+  to `docs/experiments/README.md` before running it, so that two machines
+  never use the same ID.
+- In the experiment record, state the machine (name only) and the GPU used
+  for each stage.
+- Keep the outputs in the remote server's `outputs/` directory. Copy only the
+  files needed for summaries and records to the main environment. Do not
+  delete or move outputs on either side.
+
 ## Implementation scope
 
 - Implement only the phase or task explicitly requested.
