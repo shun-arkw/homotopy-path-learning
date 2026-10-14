@@ -499,3 +499,13 @@ EXP-0037と同じ手順（微調整後の方策を初期値にした探索，予
 生成物:    outputs/EXP-0038/<run-id>/（実行スクリプトはoutputs/EXP-0038/scripts/）
 ```
 
+### EXP-0039：$d_b=2$での標準パイプライン（n2-d22，n2-d33，n3-d333）
+
+報告の表をベジェ次数$d_b=2$でそろえるため，n2-d22，n2-d33，n3-d333で，$d_b=2$の標準パイプライン（ゼロからの探索の教師データ，attentionの教師あり学習，微調整）を実行する．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0039-n2-d22-db2.yaml，exp-0039-n2-d33-db2.yaml，exp-0039-n3-d333-db2.yaml
+実験記録:  docs/experiments/EXP-0039-db2-pipeline-n2-n3/
+生成物:    outputs/EXP-0039/<run-id>/（実行スクリプトはoutputs/EXP-0039/scripts/）
+```
+
