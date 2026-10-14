@@ -233,3 +233,112 @@ def test_augmentation_clips_labels_and_rejects_bad_shapes():
     ):
         with pytest.raises(ValueError):
             run(make_agent(), obs, act, epochs=1, augmentations=bad)
+
+
+def multi_label_data(n: int = 60, k: int = 2, seed: int = 0):
+    obs, act = make_data(n, seed)
+    rng = np.random.default_rng(seed + 1)
+    others = np.clip(act[:, None, :] + 0.1 * rng.normal(size=(n, k - 1, ACTION_DIM)), -1, 1).astype(np.float32)
+    return obs, np.concatenate([act[:, None, :], others], axis=1)
+
+
+def test_two_d_and_single_label_three_d_actions_are_identical():
+    obs, act = make_data(80)
+    a1, a2 = make_agent(), make_agent()
+    first, _ = run(a1, obs, act, epochs=4)
+    second, _ = run(a2, obs, act[:, None, :], epochs=4)
+    assert first.history == second.history
+    assert (first.label_reduction, first.n_labels_per_target) == ("mean", 1)
+    x = torch.as_tensor(obs)
+    assert torch.equal(predicted_actions(a1, x), predicted_actions(a2, x))
+
+
+def test_min_reduction_with_identical_candidates_matches_single_label():
+    obs, act = make_data(80)
+    same = np.repeat(act[:, None, :], 2, axis=1)
+    a1, a2 = make_agent(), make_agent()
+    first, _ = run(a1, obs, act, epochs=4)
+    second, _ = run(a2, obs, same, epochs=4, label_reduction="min")
+    assert second.n_labels_per_target == 2 and second.label_reduction == "min"
+    for one, two in zip(first.history, second.history):
+        assert two["train_loss"] == pytest.approx(one["train_loss"], rel=1e-5, abs=1e-8)
+        assert two["val_loss"] == pytest.approx(one["val_loss"], rel=1e-5, abs=1e-8)
+        assert two["switch_fraction"] == 0.0  # identical candidates: the first index is always chosen
+    assert "switch_fraction" not in first.history[0]
+    x = torch.as_tensor(obs)
+    np.testing.assert_allclose(
+        predicted_actions(a1, x).detach().numpy(), predicted_actions(a2, x).detach().numpy(), atol=1e-5
+    )
+
+
+def test_min_loss_uses_nearest_candidate_by_hand():
+    obs, act = make_data(40)
+    far = np.where(act > 0, -1.0, 1.0)  # a distant second candidate
+    labels = np.stack([act, far.astype(np.float32)], axis=1).astype(np.float32)
+    agent = make_agent()
+    result, _ = run(agent, obs, labels, epochs=1, label_reduction="min", learning_rate=1e-9)
+    # (essentially) untrained network: recompute the validation loss by hand
+    order = np.random.default_rng(0).permutation(40)
+    val_idx = order[result.n_train :]
+    with torch.no_grad():
+        pred = predicted_actions(agent, torch.as_tensor(obs[val_idx])).numpy()
+    per = ((pred[:, None, :] - labels[val_idx]) ** 2).mean(axis=2)
+    assert result.history[-1]["val_loss"] == pytest.approx(per.min(axis=1).mean(), abs=1e-6)
+    # the loss with a far second candidate equals the loss of the near candidate alone when it is nearer
+    near_only = ((pred - act[val_idx]) ** 2).mean(axis=1)
+    assert np.all(per.min(axis=1) <= near_only + 1e-12)
+
+
+def test_min_reduction_learns_the_nearer_mode_and_records_switch_fraction():
+    obs, act = make_data(100)
+    labels = np.stack([act, -act], axis=1).astype(np.float32)
+    agent = make_agent()
+    result, _ = run(agent, obs, labels, epochs=40, label_reduction="min")
+    assert result.history[-1]["val_loss"] < 0.2 * result.history[0]["val_loss"]
+    assert all(0.0 <= item["switch_fraction"] <= 1.0 for item in result.history)
+
+
+def test_split_is_by_target_and_mean_with_multiple_labels_is_error():
+    obs, labels = multi_label_data(50, 3)
+    result, _ = run(make_agent(), obs, labels, epochs=1, label_reduction="min", val_fraction=0.2)
+    assert result.n_train + result.n_val == 50 and result.n_val == 10
+    with pytest.raises(ValueError):
+        run(make_agent(), obs, labels, epochs=1)  # default "mean" with K=3
+    with pytest.raises(ValueError):
+        run(make_agent(), obs, labels, epochs=1, label_reduction="max")
+    with pytest.raises(ValueError):
+        run(make_agent(), obs, labels[:, :0], epochs=1, label_reduction="min")
+    with pytest.raises(ValueError):
+        run(make_agent(), obs, labels[..., None], epochs=1, label_reduction="min")
+
+
+def test_augmentation_applies_same_element_to_all_labels():
+    obs, act, groups = equivariant_task(60)
+    other = np.clip(act + 0.1, -1, 1).astype(np.float32)
+    labels = np.stack([act, other], axis=1)
+    swap_act = torch.as_tensor(groups[1][1])
+    # reproduce the einsum used inside the trainer: the difference of the two augmented
+    # candidates equals M_act applied to the difference before augmentation
+    choice = torch.tensor([0, 1] * 30)
+    stack = torch.stack([torch.as_tensor(groups[0][1]), swap_act])
+    raw = torch.einsum("bij,bkj->bki", stack[choice], torch.as_tensor(labels))
+    diff_after = raw[:, 1] - raw[:, 0]
+    diff_before = torch.as_tensor(labels[:, 1] - labels[:, 0])
+    expected = torch.einsum("bij,bj->bi", stack[choice], diff_before)
+    torch.testing.assert_close(diff_after, expected)
+    # and the trainer runs deterministically with K=2 augmentation
+    r1, _ = run(make_agent(), obs, labels, epochs=3, augmentations=groups, label_reduction="min")
+    r2, _ = run(make_agent(), obs, labels, epochs=3, augmentations=groups, label_reduction="min")
+    assert r1.history == r2.history and r1.n_augmentations == 2 and r1.clipped_label_fraction == 0.0
+    plain, _ = run(make_agent(), obs, labels, epochs=3, label_reduction="min")
+    assert r1.history != plain.history
+
+
+def test_augmentation_clip_fraction_counts_all_labels():
+    obs, act, _ = equivariant_task(60)
+    labels = np.stack([act, 0.5 * act], axis=1).astype(np.float32)
+    scale = (np.eye(OBS_DIM, dtype=np.float32), 3.0 * np.eye(ACTION_DIM, dtype=np.float32))
+    result, _ = run(make_agent(), obs, labels, epochs=1, augmentations=[scale], label_reduction="min")
+    train_idx = np.random.default_rng(0).permutation(60)[: result.n_train]
+    expected = (np.abs(3.0 * labels[train_idx]) > 1.0 + 1e-6).mean()
+    assert result.clipped_label_fraction == pytest.approx(expected)

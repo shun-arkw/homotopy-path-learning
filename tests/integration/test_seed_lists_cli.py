@@ -202,3 +202,138 @@ def test_screen_linear_and_select_hard_seeds(tmp_path) -> None:
     short = run_cli("select_hard_seeds.py", "--screen-run-dir", str(run_a), "--calibration", "2",
                     "--quantile", "0.5", "--split", "x:100", "--output-dir", str(tmp_path / "o3"), check=False)
     assert short.returncode != 0
+
+
+def drop_elapsed(path: Path):
+    return [{k: v for k, v in r.items() if k != "elapsed"} for r in read_csv_rows(path)]
+
+
+def test_finetune_train_pool_and_workers(bc_run) -> None:
+    output_root, init_dir = bc_run
+    default = finetune(output_root, init_dir, "ft-nopool")
+    assert not (default / "pool_metrics.csv").exists()
+    default_meta = json.loads((default / "metadata.json").read_text())["finetune"]
+    assert default_meta["train_pool_size"] is None and default_meta["train_pool_seeds"] is None
+    assert list(read_csv_rows(default / "finetune_metrics.csv")[0]) == [
+        "iteration", "mean_cost_ratio", "mean_grad_norm", "surrogate_loss", "bc_loss", "elapsed",
+    ]
+
+    extra = ("--train-pool-size", "4", "--batch-problems", "4")
+    single = finetune(output_root, init_dir, "ft-pool1", *extra)
+    double = finetune(output_root, init_dir, "ft-pool2", *extra, "--workers", "2")
+    assert_same_run(single, double)
+    assert (single / "pool_metrics.csv").read_text() == (double / "pool_metrics.csv").read_text()
+    rows = read_csv_rows(single / "pool_metrics.csv")
+    assert list(rows[0]) == ["iteration", "evaluations_per_target", "pool_delta_j"]
+    assert [int(r["iteration"]) for r in rows] == [1, 2, 3]
+    assert [int(r["evaluations_per_target"]) for r in rows] == [2, 4, 6]  # 2 * pairs(=1) * iteration
+    assert all(np.isfinite(float(r["pool_delta_j"])) for r in rows)
+    meta = json.loads((single / "metadata.json").read_text())["finetune"]
+    assert meta["train_pool_size"] == 4 and meta["train_pool_seeds"] == [6000000, 6000003]
+
+    # pool smaller than the batch (repeats) and a seed-list file shorter than the batch
+    small = finetune(output_root, init_dir, "ft-pool-small", "--train-pool-size", "2", "--batch-problems", "4")
+    assert len(read_csv_rows(small / "pool_metrics.csv")) == 3
+    short = Path(output_root) / "short-seeds.txt"
+    short.write_text("1\n2\n", encoding="utf-8")
+    failed = run_cli(
+        "finetune.py", "--config", CONFIG, "--init-run-dir", str(init_dir), "--iterations", "3",
+        "--train-pool-size", "3", "--train-seeds-file", str(short), "--experiment-id", "EXP-TEST",
+        "--run-id", "pool-short", "--output-root", str(output_root), "--allow-dirty", check=False,
+    )
+    assert failed.returncode != 0 and not (output_root / "EXP-TEST" / "pool-short").exists()
+    # a pool smaller than iterations * batch is accepted with a short seed file
+    listed = finetune(output_root, init_dir, "ft-pool-file", "--train-pool-size", "2", "--train-seeds-file", str(short))
+    assert json.loads((listed / "metadata.json").read_text())["finetune"]["train_pool_seeds"] == [1, 2]
+    zero = run_cli(
+        "finetune.py", "--config", CONFIG, "--init-run-dir", str(init_dir), "--train-pool-size", "0",
+        "--experiment-id", "EXP-TEST", "--run-id", "pool-zero", "--output-root", str(output_root),
+        "--allow-dirty", check=False,
+    )
+    assert zero.returncode != 0
+
+
+def test_finetune_sigma_schedule_and_workers(bc_run) -> None:
+    output_root, init_dir = bc_run
+    default = finetune(output_root, init_dir, "ft-const", "--sigma", "0.1")
+    assert "sigma" not in read_csv_rows(default / "finetune_metrics.csv")[0]
+    meta = json.loads((default / "metadata.json").read_text())["finetune"]
+    assert meta["sigma_end"] is None and meta["sigma_schedule"] == "constant"
+
+    one = finetune(output_root, init_dir, "ft-decay1", "--sigma", "0.1", "--sigma-end", "0.04")
+    two = finetune(output_root, init_dir, "ft-decay2", "--sigma", "0.1", "--sigma-end", "0.04", "--workers", "2")
+    assert_same_run(one, two)
+    sigmas = [float(r["sigma"]) for r in read_csv_rows(one / "finetune_metrics.csv")]
+    assert sigmas == pytest.approx([0.1, 0.07, 0.04])
+    meta = json.loads((one / "metadata.json").read_text())["finetune"]
+    assert meta["sigma_end"] == 0.04 and meta["sigma_schedule"] == "linear" and meta["sigma"] == 0.1
+    # sigma_end == sigma reproduces the constant schedule exactly (apart from the extra column)
+    same = finetune(output_root, init_dir, "ft-flat", "--sigma", "0.1", "--sigma-end", "0.1")
+    strip = lambda rows: [{k: v for k, v in r.items() if k not in ("elapsed", "sigma")} for r in rows]
+    assert strip(read_csv_rows(same / "finetune_metrics.csv")) == strip(read_csv_rows(default / "finetune_metrics.csv"))
+    for bad in ("0.2", "0", "-0.1"):
+        failed = run_cli(
+            "finetune.py", "--config", CONFIG, "--init-run-dir", str(init_dir), "--sigma", "0.1",
+            "--sigma-end", bad, "--experiment-id", "EXP-TEST", "--run-id", "sigma-bad",
+            "--output-root", str(output_root), "--allow-dirty", check=False,
+        )
+        assert failed.returncode != 0 and not (output_root / "EXP-TEST" / "sigma-bad").exists()
+
+
+def bc_run_cli(output_root: Path, run_id: str, *extra: str) -> Path:
+    run_cli(
+        "behavior_cloning.py", "--config", CONFIG, "--hidden-sizes", "16,16", "--epochs", "3",
+        "--val-fraction", "0.25", "--num-instances", "2", "--experiment-id", "EXP-TEST", "--run-id", run_id,
+        "--output-root", str(output_root), "--allow-dirty", *extra,
+    )
+    return output_root / "EXP-TEST" / run_id
+
+
+def test_nearest_label_bc_and_centroid_labels_cli(bc_run) -> None:
+    output_root, _ = bc_run
+    labels = output_root / "EXP-TEST" / "labels"
+    labels2 = oracle(output_root, "labels-s1", "--evaluation-seed", "900000", "--num-instances", "4", "--search-seed", "1")
+
+    plain = bc_run_cli(output_root, "bc-plain", "--label-run-dir", str(labels))
+    assert list(read_csv_rows(plain / "train_metrics.csv")[0]) == ["epoch", "train_loss", "val_loss"]
+    meta = json.loads((plain / "metadata.json").read_text())["behavior_cloning"]
+    assert meta["label_groups"] == [] and meta["n_labels_per_target"] == 1 and meta["label_reduction"] == "mean"
+
+    # a K=1 group is the same computation as --label-run-dir
+    group1 = bc_run_cli(output_root, "bc-group1", "--label-group", str(labels))
+    assert (plain / "train_metrics.csv").read_text() == (group1 / "train_metrics.csv").read_text()
+    sa = torch.load(plain / "checkpoints" / "last.pt", map_location="cpu")["model_state_dict"]
+    sb = torch.load(group1 / "checkpoints" / "last.pt", map_location="cpu")["model_state_dict"]
+    assert all(torch.equal(sa[k], sb[k]) for k in sa)
+
+    nearest = bc_run_cli(
+        output_root, "bc-min", "--label-group", f"{labels},{labels2}", "--label-reduction", "min",
+    )
+    rows = read_csv_rows(nearest / "train_metrics.csv")
+    assert list(rows[0]) == ["epoch", "train_loss", "val_loss", "switch_fraction"]
+    assert all(0.0 <= float(r["switch_fraction"]) <= 1.0 for r in rows)
+    meta = json.loads((nearest / "metadata.json").read_text())["behavior_cloning"]
+    assert meta["label_groups"] == [[str(labels), str(labels2)]]
+    assert meta["n_labels_per_target"] == 2 and meta["label_reduction"] == "min"
+    assert meta["n_train"] + meta["n_val"] == 4  # split by target, not by (target, label)
+
+    for args in (
+        ["--label-group", f"{labels},{labels2}"],  # K=2 with the default 'mean'
+        ["--label-group", f"{labels},{labels2}", "--label-group", str(labels), "--label-reduction", "min"],  # K differs
+        ["--label-group", f"{labels},{labels2}", "--label-run-dir", str(labels), "--label-reduction", "min"],
+    ):
+        failed = run_cli(
+            "behavior_cloning.py", "--config", CONFIG, "--epochs", "1", "--experiment-id", "EXP-TEST",
+            "--run-id", "bc-bad", "--output-root", str(output_root), "--allow-dirty", *args, check=False,
+        )
+        assert failed.returncode != 0 and not (output_root / "EXP-TEST" / "bc-bad").exists()
+
+    centroid = output_root / "centroid"
+    run_cli("centroid_labels.py", "--out", str(centroid), "--first", "900000", "--num", "4",
+            "--run-dir", str(labels), "--run-dir", str(labels2))
+    expected = (np.load(labels / "oracle_actions.npy") + np.load(labels2 / "oracle_actions.npy")) / 2
+    np.testing.assert_allclose(np.load(centroid / "oracle_actions.npy"), expected)
+    cmeta = json.loads((centroid / "metadata.json").read_text())
+    assert cmeta["n_runs"] == 2 and cmeta["target_seeds"] == [900000, 900003]
+    bc_centroid = bc_run_cli(output_root, "bc-centroid", "--label-run-dir", str(centroid))
+    assert json.loads((bc_centroid / "metadata.json").read_text())["behavior_cloning"]["n_labels"] == 4

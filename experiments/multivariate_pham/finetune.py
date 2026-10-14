@@ -31,12 +31,13 @@ from homotopy_path_learning.rl.checkpoint import (
     save_checkpoint,
     validate_checkpoint,
 )
-from homotopy_path_learning.evaluation.seeds import read_seed_list, seed_file_record
+from homotopy_path_learning.evaluation.seeds import read_seed_list, seed_file_record, train_problem_seed
 from homotopy_path_learning.rl.cost_finetune import (
     antithetic_action_gradients,
     antithetic_candidates,
     antithetic_gradients_from_costs,
     finetune_step,
+    sigma_at,
 )
 from homotopy_path_learning.rl.parallel import EnvPool
 from homotopy_path_learning.rl.train_utils import (
@@ -102,7 +103,13 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=2000)
     parser.add_argument("--batch-problems", type=int, default=32)
     parser.add_argument("--pairs", type=int, default=4)
-    parser.add_argument("--sigma", type=float, default=0.1)
+    parser.add_argument("--sigma", type=float, default=0.1, help="Perturbation scale (sigma_start when --sigma-end is given).")
+    parser.add_argument(
+        "--sigma-end",
+        type=float,
+        default=None,
+        help="Final perturbation scale of a linear decay from --sigma (0 < sigma_end <= sigma). Default: constant sigma.",
+    )
     parser.add_argument("--learning-rate", type=float, default=1.0e-4)
     parser.add_argument("--bc-weight", type=float, default=0.0)
     parser.add_argument("--label-run-dir", action="append", default=[])
@@ -114,6 +121,13 @@ def main() -> None:
         "--train-seeds-file",
         default=None,
         help="Seed-list file; problem b of iteration k (1-based) uses element (k-1)*batch_problems+b. Replaces --train-seed.",
+    )
+    parser.add_argument(
+        "--train-pool-size",
+        type=int,
+        default=None,
+        help="Use a fixed pool of N training targets (seeds train_seed..train_seed+N-1, or the first N of "
+        "--train-seeds-file) cyclically; also writes pool_metrics.csv. Default: a new target every time.",
     )
     parser.add_argument(
         "--val-seeds-file",
@@ -139,21 +153,32 @@ def main() -> None:
         parser.error("iteration, batch, pair, validation and interval counts must be positive.")
     if args.workers < 1:
         parser.error("--workers must be at least 1.")
+    if args.train_pool_size is not None and args.train_pool_size < 1:
+        parser.error("--train-pool-size must be at least 1.")
+    if args.sigma_end is not None and not 0.0 < args.sigma_end <= args.sigma:
+        parser.error("--sigma-end must satisfy 0 < sigma_end <= sigma.")
     train_seeds = val_seeds = None
     if args.train_seeds_file is not None:
         train_seeds = read_seed_list(args.train_seeds_file)
-        needed = args.iterations * args.batch_problems
+        needed = args.iterations * args.batch_problems if args.train_pool_size is None else args.train_pool_size
         if len(train_seeds) < needed:
-            parser.error(f"--train-seeds-file has {len(train_seeds)} seeds; iterations*batch_problems = {needed} are needed.")
+            what = "iterations*batch_problems" if args.train_pool_size is None else "--train-pool-size"
+            parser.error(f"--train-seeds-file has {len(train_seeds)} seeds; {what} = {needed} are needed.")
     if args.val_seeds_file is not None:
         val_seeds = read_seed_list(args.val_seeds_file)
         if len(val_seeds) < args.val_instances:
             parser.error(f"--val-seeds-file has {len(val_seeds)} seeds; --val-instances = {args.val_instances} are needed.")
         val_seeds = val_seeds[: args.val_instances]
 
-    def train_problem_seed(iteration: int, b: int) -> int:
-        index = (iteration - 1) * args.batch_problems + b
-        return train_seeds[index] if train_seeds is not None else args.train_seed + index
+    def problem_seed(iteration: int, b: int) -> int:
+        return train_problem_seed(
+            iteration,
+            b,
+            batch_problems=args.batch_problems,
+            train_seed=args.train_seed,
+            train_seeds=train_seeds,
+            pool_size=args.train_pool_size,
+        )
 
     def val_problem_seed(i: int) -> int:
         return val_seeds[i] if val_seeds is not None else args.val_seed + i
@@ -234,15 +259,39 @@ def main() -> None:
         val_obs_array = np.stack(val_obs)
         val_linear = np.array([float(c.linear_cost.mean) for c in val_contexts])
 
-        def validate() -> tuple[float, float]:
-            actions = policy_actions(val_obs_array)
+        def evaluate_policy_on(obs_array: np.ndarray, contexts_: list, linear: np.ndarray) -> tuple[float, float]:
+            actions = policy_actions(obs_array)
             if pool is not None:
-                costs = np.array(pool.mean_costs(val_contexts, list(actions)))
+                costs = np.array(pool.mean_costs(contexts_, list(actions)))
             else:
                 costs = np.array(
-                    [float(env.evaluate_action_against_context(c, a).tracking_cost.mean) for c, a in zip(val_contexts, actions)]
+                    [float(env.evaluate_action_against_context(c, a).tracking_cost.mean) for c, a in zip(contexts_, actions)]
                 )
-            return (float(costs.mean()) - float(val_linear.mean())) / float(val_linear.mean()) * 100.0, float(np.mean(costs < val_linear))
+            return (float(costs.mean()) - float(linear.mean())) / float(linear.mean()) * 100.0, float(np.mean(costs < linear))
+
+        def validate() -> tuple[float, float]:
+            return evaluate_policy_on(val_obs_array, val_contexts, val_linear)
+
+        # Fixed training pool (diagnostic only; never used for model selection).
+        pool_contexts, pool_obs_array, pool_linear = [], None, None
+        pool_rows = []
+        if args.train_pool_size is not None:
+            pool_seeds = [
+                train_problem_seed(
+                    1, index, batch_problems=args.train_pool_size, train_seed=args.train_seed, train_seeds=train_seeds
+                )
+                for index in range(args.train_pool_size)
+            ]
+            pool_obs = []
+            if pool is not None:
+                pool_obs, pool_contexts = pool.reset_many(pool_seeds)
+            else:
+                for seed_ in pool_seeds:
+                    observation, _ = env.reset(seed=seed_)
+                    pool_contexts.append(env.current_episode_context())
+                    pool_obs.append(np.asarray(observation, dtype=np.float32))
+            pool_obs_array = np.stack(pool_obs)
+            pool_linear = np.array([float(c.linear_cost.mean) for c in pool_contexts])
 
         val_rows = []
         initial_delta, positive = validate()
@@ -255,21 +304,22 @@ def main() -> None:
             contexts, observations = [], []
             if pool is not None:
                 observations, contexts = pool.reset_many(
-                    [train_problem_seed(iteration, b) for b in range(args.batch_problems)]
+                    [problem_seed(iteration, b) for b in range(args.batch_problems)]
                 )
             else:
                 for b in range(args.batch_problems):
-                    observation, _ = env.reset(seed=train_problem_seed(iteration, b))
+                    observation, _ = env.reset(seed=problem_seed(iteration, b))
                     contexts.append(env.current_episode_context())
                     observations.append(np.asarray(observation, dtype=np.float32))
             observations = np.stack(observations)
             means = policy_actions(observations)
+            sigma = sigma_at(iteration, iterations=args.iterations, sigma_start=args.sigma, sigma_end=args.sigma_end)
 
             if pool is not None:
                 # Candidates are drawn first (same RNG order as the sequential
                 # estimator), then all (context, action) pairs are tracked.
                 eps, plus, minus = antithetic_candidates(
-                    means, sigma=args.sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
+                    means, sigma=sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
                 )
                 items_contexts, items_actions = [], []
                 for b in range(args.batch_problems):
@@ -281,7 +331,7 @@ def main() -> None:
                 )
                 linear = np.array([float(c.linear_cost.mean) for c in contexts])[:, None]
                 gradients, info = antithetic_gradients_from_costs(
-                    eps, raw[:, :, 0] / linear, raw[:, :, 1] / linear, sigma=args.sigma
+                    eps, raw[:, :, 0] / linear, raw[:, :, 1] / linear, sigma=sigma
                 )
             else:
 
@@ -291,7 +341,7 @@ def main() -> None:
                     )
 
                 gradients, info = antithetic_action_gradients(
-                    cost_fn, means, sigma=args.sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
+                    cost_fn, means, sigma=sigma, n_pairs=args.pairs, rng=rng, low=low, high=high
                 )
             bc_kwargs = {}
             if labels is not None:
@@ -314,6 +364,19 @@ def main() -> None:
                     "elapsed": time.time() - timer,
                 }
             )
+            if args.sigma_end is not None:
+                metrics_rows[-1]["sigma"] = sigma
+            if pool_obs_array is not None and (
+                iteration <= 50 or iteration % args.val_interval == 0 or iteration == args.iterations
+            ):
+                pool_delta, _ = evaluate_policy_on(pool_obs_array, pool_contexts, pool_linear)
+                pool_rows.append(
+                    {
+                        "iteration": iteration,
+                        "evaluations_per_target": 2 * args.pairs * iteration,
+                        "pool_delta_j": pool_delta,
+                    }
+                )
             if iteration % args.val_interval == 0 or iteration == args.iterations:
                 delta, positive = validate()
                 val_rows.append({"iteration": iteration, "val_delta_j": delta, "val_positive_rate": positive})
@@ -326,8 +389,15 @@ def main() -> None:
         write_rows(
             run_dir / "finetune_metrics.csv",
             metrics_rows,
-            fieldnames=["iteration", "mean_cost_ratio", "mean_grad_norm", "surrogate_loss", "bc_loss", "elapsed"],
+            fieldnames=["iteration", "mean_cost_ratio", "mean_grad_norm", "surrogate_loss", "bc_loss", "elapsed"]
+            + (["sigma"] if args.sigma_end is not None else []),
         )
+        if args.train_pool_size is not None:
+            write_rows(
+                run_dir / "pool_metrics.csv",
+                pool_rows,
+                fieldnames=["iteration", "evaluations_per_target", "pool_delta_j"],
+            )
         write_rows(run_dir / "val_metrics.csv", val_rows, fieldnames=["iteration", "val_delta_j", "val_positive_rate"])
         save_checkpoint(
             run_dir / "checkpoints" / "last.pt",
@@ -366,6 +436,17 @@ def main() -> None:
         "batch_problems": args.batch_problems,
         "pairs": args.pairs,
         "sigma": args.sigma,
+        "sigma_end": args.sigma_end,
+        "sigma_schedule": "constant" if args.sigma_end is None else "linear",
+        "train_pool_size": args.train_pool_size,
+        "train_pool_seeds": None
+        if args.train_pool_size is None
+        else [
+            train_problem_seed(1, 0, batch_problems=args.train_pool_size, train_seed=args.train_seed, train_seeds=train_seeds),
+            train_problem_seed(
+                1, args.train_pool_size - 1, batch_problems=args.train_pool_size, train_seed=args.train_seed, train_seeds=train_seeds
+            ),
+        ],
         "learning_rate": args.learning_rate,
         "bc_weight": args.bc_weight,
         "label_run_dirs": list(args.label_run_dir),

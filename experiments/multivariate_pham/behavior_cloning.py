@@ -77,10 +77,62 @@ def load_labels(base_config, label_dirs: list[str]):
     return np.concatenate(observations), np.concatenate(actions), seeds
 
 
+def load_label_group(base_config, dirs: list[str]):
+    """Load a group of ``K = len(dirs)`` oracle runs over the same targets.
+
+    Every run is checked like :func:`load_labels` (compatible config, files,
+    lengths). The target-seed sets of all runs must coincide (the row order of
+    the first run is used; other runs are re-ordered by seed), the observations
+    must be exactly equal and the ``linear_cost`` values must be equal.
+    Returns ``(observations, actions, seeds)`` with shapes ``(N, obs_dim)``
+    (dtype of the first run), ``(N, K, action_dim)`` (float64; candidate ``k``
+    comes from ``dirs[k]``) and a list of ``N`` ints. Raises ``ValueError`` on
+    any mismatch (including duplicate seeds within a run).
+    """
+
+    if len(dirs) == 0:
+        raise ValueError("a label group needs at least one run directory.")
+    reference = None
+    actions = []
+    for label_dir in dirs:
+        obs, act, seeds = load_labels(base_config, [label_dir])
+        if len(set(seeds)) != len(seeds):
+            raise ValueError(f"label run {label_dir} contains duplicate target seeds.")
+        linear = np.array([float(row["linear_cost"]) for row in read_rows(Path(label_dir) / "oracle.csv")])
+        if reference is None:
+            reference = (obs, seeds, linear, label_dir)
+            actions.append(act)
+            continue
+        ref_obs, ref_seeds, ref_linear, ref_dir = reference
+        if set(seeds) != set(ref_seeds):
+            raise ValueError(f"label run {label_dir} has different target seeds than {ref_dir}.")
+        position = {seed: index for index, seed in enumerate(seeds)}
+        order = np.array([position[seed] for seed in ref_seeds])
+        if not np.array_equal(obs[order], ref_obs):
+            raise ValueError(f"label run {label_dir} has observations that differ from {ref_dir}.")
+        if not np.array_equal(linear[order], ref_linear):
+            raise ValueError(f"label run {label_dir} has linear costs that differ from {ref_dir}.")
+        actions.append(act[order])
+    return reference[0], np.stack(actions, axis=1).astype(np.float64), list(reference[1])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Behavior-clone oracle actions into a policy network.")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--label-run-dir", action="append", required=True)
+    parser.add_argument("--label-run-dir", action="append", default=[])
+    parser.add_argument(
+        "--label-group",
+        action="append",
+        default=[],
+        help="Comma-separated oracle runs over the same targets (K candidate labels per target); repeatable. "
+        "All groups must have the same K.",
+    )
+    parser.add_argument(
+        "--label-reduction",
+        choices=("mean", "min"),
+        default="mean",
+        help="Loss over the K label candidates: 'mean' needs K=1; 'min' uses the nearest candidate.",
+    )
     parser.add_argument("--hidden-sizes", default="64,64")
     parser.add_argument("--actor-type", choices=("mlp", "attention", "sequence"), default="mlp")
     parser.add_argument("--attention-d-model", type=int, default=128)
@@ -110,6 +162,18 @@ def main() -> None:
     parser.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
 
+    label_groups = [[part.strip() for part in group.split(",") if part.strip()] for group in args.label_group]
+    if not args.label_run_dir and not label_groups:
+        parser.error("one of --label-run-dir or --label-group is required.")
+    if any(len(group) == 0 for group in label_groups):
+        parser.error("--label-group must list at least one run directory.")
+    if len({len(group) for group in label_groups}) > 1:
+        parser.error("all --label-group entries must have the same number of runs K.")
+    n_labels_per_target = len(label_groups[0]) if label_groups else 1
+    if args.label_run_dir and n_labels_per_target != 1:
+        parser.error("--label-run-dir (K=1) cannot be combined with --label-group of K>1.")
+    if n_labels_per_target > 1 and args.label_reduction == "mean":
+        parser.error("--label-group with K>1 requires --label-reduction min.")
     require_clean_git(allow_dirty=args.allow_dirty)
     base = load_config(args.config)
     base = with_latent_dim(base, resolve_latent_dim(base, args.latent_dim))
@@ -132,7 +196,19 @@ def main() -> None:
     if run_dir.exists():
         raise FileExistsError(f"run directory already exists: {run_dir}")
 
-    observations, actions, target_seeds = load_labels(base, args.label_run_dir)
+    if not label_groups:
+        observations, actions, target_seeds = load_labels(base, args.label_run_dir)
+    else:
+        parts = []
+        if args.label_run_dir:
+            legacy_obs, legacy_act, legacy_seeds = load_labels(base, args.label_run_dir)
+            parts.append((legacy_obs, legacy_act[:, None, :], legacy_seeds))
+        parts += [load_label_group(base, group) for group in label_groups]
+        observations = np.concatenate([part[0] for part in parts])
+        actions = np.concatenate([part[1] for part in parts])
+        target_seeds = [seed for part in parts for seed in part[2]]
+        if n_labels_per_target == 1:
+            actions = actions[:, 0, :]
     n_labels = int(observations.shape[0])
     if args.num_train is not None:
         observations, actions, target_seeds = (
@@ -154,7 +230,7 @@ def main() -> None:
                     "does not match the environment observation."
                 )
         agent = build_agent(config, env, device=args.device)
-        for label_dir in args.label_run_dir:
+        for label_dir in list(args.label_run_dir) + [d for group in label_groups for d in group]:
             basis_path = Path(label_dir) / "latent_basis.npy"
             if basis_path.is_file() and not np.allclose(np.load(basis_path), env.parameterization.basis, atol=1e-12):
                 raise ValueError(f"latent basis of label run {label_dir} differs from the environment basis.")
@@ -180,11 +256,12 @@ def main() -> None:
             seed=args.seed,
             device=args.device,
             augmentations=augmentations,
+            label_reduction=args.label_reduction,
         )
         write_rows(
             run_dir / "train_metrics.csv",
             [dict(item, epoch=int(item["epoch"])) for item in result.history],
-            fieldnames=["epoch", "train_loss", "val_loss"],
+            fieldnames=["epoch", "train_loss", "val_loss"] + (["switch_fraction"] if args.label_reduction == "min" else []),
         )
         save_checkpoint(
             run_dir / "checkpoints" / "last.pt",
@@ -215,6 +292,9 @@ def main() -> None:
         env.close()
     metadata["behavior_cloning"] = {
         "label_run_dirs": list(args.label_run_dir),
+        "label_groups": label_groups,
+        "n_labels_per_target": n_labels_per_target,
+        "label_reduction": args.label_reduction,
         "n_labels": n_labels,
         "n_train": result.n_train,
         "n_val": result.n_val,

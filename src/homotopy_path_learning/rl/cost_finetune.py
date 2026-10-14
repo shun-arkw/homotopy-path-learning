@@ -18,6 +18,31 @@ from homotopy_path_learning.rl.behavior_cloning import predicted_actions
 from homotopy_path_learning.rl.networks import ActorCritic
 
 
+def sigma_at(iteration: int, *, iterations: int, sigma_start: float, sigma_end: float | None) -> float:
+    """Return the perturbation scale of ``iteration`` (1-based) under a linear schedule.
+
+    ``sigma_k = sigma_start + (sigma_end - sigma_start) * (k - 1) / (T - 1)`` with
+    ``T = iterations`` (``sigma_start`` if ``T == 1``). ``sigma_end=None`` returns
+    ``sigma_start``. Requires ``1 <= iteration <= iterations``, ``sigma_start > 0``
+    and, when given, ``0 < sigma_end <= sigma_start``.
+    """
+
+    if isinstance(iterations, bool) or int(iterations) < 1:
+        raise ValueError(f"iterations must be a positive integer, got {iterations!r}.")
+    if isinstance(iteration, bool) or not 1 <= int(iteration) <= int(iterations):
+        raise ValueError(f"iteration must lie in [1, {iterations}], got {iteration!r}.")
+    if not np.isfinite(sigma_start) or float(sigma_start) <= 0.0:
+        raise ValueError(f"sigma_start must be positive and finite, got {sigma_start!r}.")
+    if sigma_end is None:
+        return float(sigma_start)
+    if not np.isfinite(sigma_end) or float(sigma_end) <= 0.0 or float(sigma_end) > float(sigma_start):
+        raise ValueError(f"sigma_end must satisfy 0 < sigma_end <= sigma_start, got {sigma_end!r}.")
+    if int(iterations) == 1:
+        return float(sigma_start)
+    fraction = (int(iteration) - 1) / (int(iterations) - 1)
+    return float(sigma_start) + (float(sigma_end) - float(sigma_start)) * fraction
+
+
 def antithetic_candidates(
     means: ArrayLike,
     *,
@@ -229,4 +254,5 @@ __all__ = [
     "antithetic_candidates",
     "antithetic_gradients_from_costs",
     "finetune_step",
+    "sigma_at",
 ]

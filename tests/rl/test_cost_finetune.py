@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from homotopy_path_learning.rl.cost_finetune import antithetic_action_gradients, finetune_step
+from homotopy_path_learning.rl.cost_finetune import antithetic_action_gradients, finetune_step, sigma_at
 from homotopy_path_learning.rl.behavior_cloning import predicted_actions
 from homotopy_path_learning.rl.networks import ActorCritic
 
@@ -167,3 +167,26 @@ def test_refactored_estimator_identical_to_reference_and_split_functions():
     seq_rng = np.random.default_rng(11)
     antithetic_action_gradients(cost, means, rng=seq_rng, **kwargs)
     assert rng.standard_normal() == seq_rng.standard_normal()
+
+
+def test_sigma_at_linear_schedule_and_validation():
+    kw = dict(iterations=5, sigma_start=0.1, sigma_end=0.02)
+    values = [sigma_at(k, **kw) for k in range(1, 6)]
+    assert values[0] == 0.1 and values[-1] == pytest.approx(0.02)
+    np.testing.assert_allclose(np.diff(values), -0.02, atol=1e-12)
+    assert sigma_at(3, **kw) == pytest.approx(0.06)
+    # constant when sigma_end is None, one iteration uses sigma_start
+    assert [sigma_at(k, iterations=4, sigma_start=0.05, sigma_end=None) for k in range(1, 5)] == [0.05] * 4
+    assert sigma_at(1, iterations=1, sigma_start=0.1, sigma_end=0.02) == 0.1
+    assert sigma_at(2, iterations=2, sigma_start=0.1, sigma_end=0.1) == 0.1
+    for bad in (
+        dict(iteration=0, iterations=5, sigma_start=0.1, sigma_end=0.05),
+        dict(iteration=6, iterations=5, sigma_start=0.1, sigma_end=0.05),
+        dict(iteration=1, iterations=0, sigma_start=0.1, sigma_end=None),
+        dict(iteration=1, iterations=5, sigma_start=0.0, sigma_end=None),
+        dict(iteration=1, iterations=5, sigma_start=0.1, sigma_end=0.0),
+        dict(iteration=1, iterations=5, sigma_start=0.1, sigma_end=0.2),
+        dict(iteration=1, iterations=5, sigma_start=0.1, sigma_end=-0.1),
+    ):
+        with pytest.raises(ValueError):
+            sigma_at(**bad)

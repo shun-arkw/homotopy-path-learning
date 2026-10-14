@@ -27,6 +27,11 @@ class BehaviorCloningResult:
     symmetry elements used for augmentation (0: none) and
     ``clipped_label_fraction`` is the fraction of augmented label entries that
     had to be clipped into the action bounds over the whole run.
+    ``label_reduction`` (``"mean"`` or ``"min"``) and ``n_labels_per_target``
+    (the number ``K`` of label candidates per target) describe the loss; for
+    ``"min"`` each ``history`` item also has ``switch_fraction`` (fraction of
+    training targets whose nearest label candidate changed since the previous
+    epoch; epoch 1 is compared with the untrained initial weights).
     """
 
     history: list[dict[str, float]]
@@ -36,6 +41,8 @@ class BehaviorCloningResult:
     n_val: int
     n_augmentations: int = 0
     clipped_label_fraction: float = 0.0
+    label_reduction: str = "mean"
+    n_labels_per_target: int = 1
 
 
 def predicted_actions(agent: ActorCritic, observations: torch.Tensor) -> torch.Tensor:
@@ -77,11 +84,17 @@ def train_behavior_cloning(
     seed: int,
     device: str | torch.device = "cpu",
     augmentations: Sequence[tuple[ArrayLike, ArrayLike]] | None = None,
+    label_reduction: str = "mean",
 ) -> tuple[BehaviorCloningResult, torch.optim.Optimizer]:
     """Fit ``agent.actor_mean`` to oracle actions with an MSE loss.
 
     ``observations`` has shape ``(N, obs_dim)`` and ``actions`` has shape
-    ``(N, action_dim)`` (floating point; copied, never mutated). Labels must lie
+    ``(N, action_dim)`` or ``(N, K, action_dim)`` (floating point; copied, never
+    mutated; ``(N, A)`` is treated as ``K = 1``). The ``K`` label candidates of a
+    target are rows of the same sample. ``label_reduction="mean"`` is the
+    squared error and requires ``K = 1``; ``"min"`` uses, per target, the
+    candidate closest to the network output:
+    ``min_k mean_a (mu_a - label_ka)^2`` averaged over targets. Labels must lie
     inside the agent's action bounds. The data are split into train/validation
     sets with ``default_rng(seed).permutation``; minibatches are shuffled with a
     ``torch.Generator`` seeded by ``seed``. Only ``actor_mean`` parameters are
@@ -93,7 +106,10 @@ def train_behavior_cloning(
     group elements, identity included). Every training sample of every
     minibatch draws an element independently (from the seeded torch generator)
     and becomes ``obs' = M_obs @ obs``, ``act' = clip(M_act @ act, low, high)``.
-    Validation and the reported full train loss use the original data.
+    With ``K > 1`` the same element is applied to all ``K`` labels of a sample.
+    The train/validation split is by target (row), so the ``K`` candidates of a
+    target are on the same side. Validation and the reported full train loss use
+    the original data and the same ``label_reduction``.
 
     ``epochs`` must be an integer ``>= 0``. ``epochs=0`` performs no training:
     the agent keeps exactly its initial weights, ``history`` is empty,
@@ -108,8 +124,20 @@ def train_behavior_cloning(
         raise ValueError(f"val_fraction must lie in (0, 1), got {val_fraction!r}.")
     obs = np.array(observations, dtype=np.float32, copy=True)
     act = np.array(actions, dtype=np.float32, copy=True)
-    if obs.ndim != 2 or act.ndim != 2:
-        raise ValueError(f"observations and actions must be 2-D, got {obs.shape} and {act.shape}.")
+    if label_reduction not in ("mean", "min"):
+        raise ValueError(f"label_reduction must be 'mean' or 'min', got {label_reduction!r}.")
+    if obs.ndim != 2 or act.ndim not in (2, 3):
+        raise ValueError(f"observations must be 2-D and actions 2-D or 3-D, got {obs.shape} and {act.shape}.")
+    if act.ndim == 2:
+        act = act[:, None, :]
+    if act.shape[1] < 1:
+        raise ValueError(f"actions must have at least one label per target, got shape {act.shape}.")
+    n_labels = int(act.shape[1])
+    if n_labels > 1 and label_reduction == "mean":
+        raise ValueError(
+            "label_reduction='mean' requires one label per target (K=1); use 'min' for K>1 "
+            "or average the labels beforehand."
+        )
     if obs.shape[0] != act.shape[0]:
         raise ValueError(f"observations and actions differ in length: {obs.shape[0]} vs {act.shape[0]}.")
     n = int(obs.shape[0])
@@ -119,8 +147,8 @@ def train_behavior_cloning(
     action_dim = int(np.prod(agent.action_shape))
     if obs.shape[1] != obs_dim:
         raise ValueError(f"observation dimension must be {obs_dim}, got {obs.shape[1]}.")
-    if act.shape[1] != action_dim:
-        raise ValueError(f"action dimension must be {action_dim}, got {act.shape[1]}.")
+    if act.shape[2] != action_dim:
+        raise ValueError(f"action dimension must be {action_dim}, got {act.shape[2]}.")
     if not (np.all(np.isfinite(obs)) and np.all(np.isfinite(act))):
         raise ValueError("observations and actions must be finite.")
     low = agent.distribution.low.detach().cpu().numpy()
@@ -168,9 +196,24 @@ def train_behavior_cloning(
     best_val = float("inf")
     best_epoch = 0
 
+    use_min = label_reduction == "min"
+
+    def reduced_loss(pred: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Loss of ``pred (B, A)`` against ``labels (B, K, A)``."""
+
+        if not use_min:
+            return F.mse_loss(pred, labels[:, 0])
+        return ((pred.unsqueeze(1) - labels) ** 2).mean(dim=2).min(dim=1).values.mean()
+
     def full_loss(x: torch.Tensor, y: torch.Tensor) -> float:
         with torch.no_grad():
-            return float(F.mse_loss(predicted_actions(agent, x), y).item())
+            return float(reduced_loss(predicted_actions(agent, x), y).item())
+
+    def nearest_label(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            return ((predicted_actions(agent, x).unsqueeze(1) - y) ** 2).mean(dim=2).argmin(dim=1)
+
+    previous_choice = nearest_label(train_obs, train_act) if use_min and int(epochs) > 0 else None
 
     for epoch in range(1, int(epochs) + 1):
         agent.train()
@@ -181,19 +224,27 @@ def train_behavior_cloning(
             if aug_obs is not None:
                 choice = torch.randint(aug_obs.shape[0], (batch_obs.shape[0],), generator=generator).to(batch_obs.device)
                 batch_obs = torch.einsum("bij,bj->bi", aug_obs[choice], batch_obs)
-                raw = torch.einsum("bij,bj->bi", aug_act[choice], batch_act)
+                if n_labels == 1:
+                    raw = torch.einsum("bij,bj->bi", aug_act[choice], batch_act[:, 0]).unsqueeze(1)
+                else:
+                    raw = torch.einsum("bij,bkj->bki", aug_act[choice], batch_act)
                 low_t, high_t = agent.distribution.low, agent.distribution.high
                 n_clipped += int(((raw < low_t - 1e-6) | (raw > high_t + 1e-6)).sum().item())
                 n_entries += int(raw.numel())
                 batch_act = torch.maximum(torch.minimum(raw, high_t), low_t)
-            loss = F.mse_loss(predicted_actions(agent, batch_obs), batch_act)
+            loss = reduced_loss(predicted_actions(agent, batch_obs), batch_act)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
         agent.eval()
         train_loss = full_loss(train_obs, train_act)
         val_loss = full_loss(val_obs, val_act)
-        history.append({"epoch": float(epoch), "train_loss": train_loss, "val_loss": val_loss})
+        item = {"epoch": float(epoch), "train_loss": train_loss, "val_loss": val_loss}
+        if use_min:
+            choice_now = nearest_label(train_obs, train_act)
+            item["switch_fraction"] = float((choice_now != previous_choice).to(torch.float64).mean().item())
+            previous_choice = choice_now
+        history.append(item)
         if val_loss < best_val:
             best_val, best_epoch = val_loss, epoch
             best_state = deepcopy(agent.actor_mean.state_dict())
@@ -210,6 +261,8 @@ def train_behavior_cloning(
         n_val=n_val,
         n_augmentations=0 if aug_obs is None else int(aug_obs.shape[0]),
         clipped_label_fraction=float(n_clipped / n_entries) if n_entries else 0.0,
+        label_reduction=label_reduction,
+        n_labels_per_target=n_labels,
     )
     return result, optimizer
 

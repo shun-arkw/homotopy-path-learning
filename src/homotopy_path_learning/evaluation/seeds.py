@@ -37,6 +37,31 @@ def read_seed_list(path: str | Path) -> list[int]:
     return seeds
 
 
+def train_problem_seed(
+    iteration: int,
+    b: int,
+    *,
+    batch_problems: int,
+    train_seed: int,
+    train_seeds: list[int] | None = None,
+    pool_size: int | None = None,
+) -> int:
+    """Return the target seed of problem ``b`` (0-based) of ``iteration`` (1-based).
+
+    The flat index is ``(iteration - 1) * batch_problems + b``. With
+    ``pool_size=N`` the index is reduced modulo ``N`` (a fixed pool of ``N``
+    targets used cyclically); ``train_seeds`` (a list of distinct seeds) or
+    ``train_seed + index`` then gives the seed. ``pool_size=None`` keeps the
+    contiguous / listed behaviour. Duplicates arise only from the modulo, never
+    from the seed list.
+    """
+
+    index = (iteration - 1) * batch_problems + b
+    if pool_size is not None:
+        index = index % pool_size
+    return int(train_seeds[index]) if train_seeds is not None else int(train_seed) + index
+
+
 def file_sha256(path: str | Path) -> str:
     """Return the hex SHA-256 digest of the file's bytes."""
 
@@ -49,4 +74,4 @@ def seed_file_record(path: str | Path) -> dict[str, str]:
     return {"path": str(path), "sha256": file_sha256(path)}
 
 
-__all__ = ["file_sha256", "read_seed_list", "seed_file_record"]
+__all__ = ["file_sha256", "read_seed_list", "seed_file_record", "train_problem_seed"]
