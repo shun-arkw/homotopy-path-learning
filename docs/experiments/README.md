@@ -519,3 +519,33 @@ EXP-0037と同じ手順（微調整後の方策を初期値にした探索，予
 生成物:    outputs/EXP-0040/（実行スクリプトはoutputs/EXP-0040/scripts/）
 ```
 
+### EXP-0041：固定した目的系の集合での微調整（n4-d3333）
+
+作り直し後の教師あり学習の方策を，学習データの32個の目的系だけで微調整し，微調整が伸びない原因（推定量・歩幅か，目的系間の一貫性か）を切り分ける診断．`finetune.py`に`--train-pool-size`を追加する．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db2.yaml
+実験記録:  docs/experiments/EXP-0041-fixed-pool-finetune-n4-d3333/
+生成物:    outputs/EXP-0041/<run-id>/（実行スクリプトはoutputs/EXP-0041/scripts/）
+```
+
+### EXP-0042：教師データの一貫化（n4-d3333）
+
+EXP-0038の3組の教師データの使い方を変える（重心を教師にする／出力に最も近い教師データとの誤差で学習する）．腕の選択は開発集合（9310000〜），最終確認は試験集合で1回だけ行う．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db2.yaml
+実験記録:  docs/experiments/EXP-0042-label-consistency-n4-d3333/
+生成物:    outputs/EXP-0042/<run-id>/（実行スクリプトはoutputs/EXP-0042/scripts/）
+```
+
+### EXP-0043：微調整の推定量の改善（n4-d3333）
+
+微調整の摂動対の数$P$，1反復の目的系数$K$，摂動幅$\sigma$（減衰を含む）を変えた腕を比べる．腕の選択は開発集合，最終確認は試験集合で1回だけ行う．メインの環境と外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db2.yaml
+実験記録:  docs/experiments/EXP-0043-finetune-estimator-n4-d3333/
+生成物:    outputs/EXP-0043/<run-id>/と外部サーバのoutputs/EXP-0043/（実行スクリプトは各outputs/EXP-0043/scripts/）
+```
+
