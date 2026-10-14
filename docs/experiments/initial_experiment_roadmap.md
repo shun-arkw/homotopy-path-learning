@@ -40,6 +40,7 @@
 | EXP-0034 | n5-d33333のパイプライン（attention） | 計画中（`EXP-0034-n5-d33333-pipeline/`）．本ロードマップ外で追加 |
 | EXP-0035 | 方策を初期値にした探索による上限の目安（n5） | 計画中（`EXP-0035-policy-initialized-bound-n5/`）．本ロードマップ外で追加 |
 | EXP-0036 | n5-d33333の微調整の延長 | 計画中（`EXP-0036-finetune-extension-n5-d33333/`）．本ロードマップ外で追加 |
+| EXP-0037 | 方策＋探索による教師データの作り直し（n5） | 計画中（`EXP-0037-policy-search-labels-n5/`）．本ロードマップ外で追加 |
 
 ## EXP-0001：Julia多変数追跡のsmoke test
 

@@ -479,3 +479,13 @@ EXP-0034のattention方策の微調整を，同じ設定でさらに2000反復�
 生成物:    外部サーバのoutputs/EXP-0036/<run-id>/（実行スクリプトはoutputs/EXP-0036/scripts/）
 ```
 
+### EXP-0037：方策＋探索による教師データの作り直し（第1周，n5）
+
+n5-d22222とn5-d33333で，微調整後の方策の行動を初期値にした探索（予算100×3方策）で教師データを作り直し，教師あり学習と微調整をやり直して，これまでの方策と比べる．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d22222-db2.yaml，exp-0028-n5-d33333-db2.yaml
+実験記録:  docs/experiments/EXP-0037-policy-search-labels-n5/
+生成物:    外部サーバのoutputs/EXP-0037/<run-id>/（実行スクリプトはoutputs/EXP-0037/scripts/）
+```
+
