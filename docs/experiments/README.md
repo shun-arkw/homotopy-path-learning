@@ -489,3 +489,13 @@ n5-d22222とn5-d33333で，微調整後の方策の行動を初期値にした�
 生成物:    外部サーバのoutputs/EXP-0037/<run-id>/（実行スクリプトはoutputs/EXP-0037/scripts/）
 ```
 
+### EXP-0038：方策＋探索による教師データの作り直し（第1周，n4-d3333）
+
+EXP-0037と同じ手順（微調整後の方策を初期値にした探索，予算100×3方策）で，n4-d3333の教師データを作り直し，教師あり学習と微調整をやり直して，EXP-0023の方策と比べる．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db2.yaml
+実験記録:  docs/experiments/EXP-0038-policy-search-labels-n4-d3333/
+生成物:    outputs/EXP-0038/<run-id>/（実行スクリプトはoutputs/EXP-0038/scripts/）
+```
+
