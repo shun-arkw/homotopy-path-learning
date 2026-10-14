@@ -364,3 +364,61 @@ def test_finetune_cli(tmp_path) -> None:
         metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
         assert metadata["finetune"]["best_val_delta_j"] <= metadata["finetune"]["initial_val_delta_j"]
         assert metadata["finetune"]["bc_weight"] == (1.0 if extra else 0.0)
+
+
+def test_oracle_cli_init_checkpoint(tmp_path) -> None:
+    import gymnasium as gym
+    import torch
+
+    from homotopy_path_learning.config import load_config
+    from homotopy_path_learning.rl.checkpoint import save_checkpoint
+    from homotopy_path_learning.rl.networks import ActorCritic
+    from homotopy_path_learning.systems import build_pham_spec
+
+    config = load_config(CONFIG)
+    space = gym.spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+    agent = ActorCritic(
+        observation_shape=(12,),
+        action_space=space,
+        hidden_sizes=tuple(config.ppo.hidden_sizes),
+        actor_logstd_init=config.ppo.actor_logstd_init,
+    )
+    checkpoint_path = tmp_path / "model.pt"
+    save_checkpoint(
+        checkpoint_path,
+        agent=agent,
+        optimizer=torch.optim.Adam(agent.parameters()),
+        config=config,
+        system_spec=build_pham_spec(config.system.degrees, config.system.free_exponents),
+        global_step=1,
+        update=1,
+        observation_shape=(12,),
+        action_space=space,
+        experiment_id=config.experiment.id,
+        run_id="run",
+        git_commit="abc",
+    )
+
+    run_dir = run_oracle_cli(
+        tmp_path / "outputs", "init", "--num-instances", "2", "--init-checkpoint", str(checkpoint_path)
+    )
+
+    observations = np.load(run_dir / "oracle_observations.npy")
+    traces = np.load(run_dir / "oracle_cost_traces.npy")
+    assert traces.shape == (2, 6)
+    metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["oracle"]["init_checkpoint"] == str(checkpoint_path)
+    assert len(metadata["oracle"]["init_checkpoint_sha256"]) == 64
+    assert metadata["oracle"]["initial_sigma"] == 0.3
+    assert metadata["oracle"]["initial_action_rule"] is not None
+    for row, trace in zip(read_csv_rows(run_dir / "oracle.csv"), traces):
+        assert float(row["oracle_cost"]) <= min(trace[0], trace[1])
+    with torch.no_grad():
+        policy_actions = agent.deterministic_action(torch.as_tensor(observations)).numpy()
+    assert policy_actions.shape == (2, 8)
+
+    plain = run_oracle_cli(tmp_path / "outputs", "plain", "--num-instances", "2")
+    plain_metadata = json.loads((plain / "metadata.json").read_text(encoding="utf-8"))
+    assert plain_metadata["oracle"]["init_checkpoint"] is None
+    assert plain_metadata["oracle"]["init_checkpoint_sha256"] is None
+    assert plain_metadata["oracle"]["initial_action_rule"] is None

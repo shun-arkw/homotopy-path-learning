@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 
 from _bootstrap import preload_julia
@@ -24,7 +25,11 @@ from homotopy_path_learning.evaluation.oracle import (
     summarize_oracle,
     with_latent_dim,
 )
-from homotopy_path_learning.evaluation.evaluator import evaluate_policy_rows
+from homotopy_path_learning.evaluation.evaluator import (
+    _action_from_agent,
+    evaluate_policy_rows,
+    load_policy_for_config,
+)
 from homotopy_path_learning.evaluation.seeds import read_seed_list, seed_file_record
 from homotopy_path_learning.evaluation.metrics import EVALUATION_FIELDS
 from homotopy_path_learning.rl.train_utils import (
@@ -119,6 +124,19 @@ def run_constant_mode(args: argparse.Namespace, config, run_dir: Path, start_tim
     print(f"RUN_DIR={run_dir}")
 
 
+def sha256_file(path: str | Path) -> str:
+    """Return the hex SHA-256 digest of the file at ``path``."""
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+INITIAL_ACTION_RULE = "deterministic policy action (tanh of actor mean), float32 cast to float64"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Directly optimize the latent action per evaluation instance (oracle baseline)."
@@ -137,6 +155,21 @@ def main() -> None:
         default=None,
         help="Per-instance mode: seed-list file (one seed per line); excludes --evaluation-seed and --num-instances.",
     )
+    parser.add_argument(
+        "--init-checkpoint",
+        default=None,
+        help=(
+            "Per-instance mode: policy checkpoint whose deterministic action is evaluated as the second "
+            "search point (after the zero action); requires --n-random >= 2. Its cost is "
+            "oracle_cost_traces.npy[:, 1]; output file formats are unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--initial-sigma",
+        type=float,
+        default=0.3,
+        help="Initial evolution-strategy step size relative to the action limit (default 0.3).",
+    )
     parser.add_argument("--mode", choices=["per-instance", "constant"], default="per-instance")
     parser.add_argument("--train-seed", type=int, default=None, help="Constant mode: base seed of training targets.")
     parser.add_argument("--num-train", type=int, default=200, help="Constant mode: number of training targets.")
@@ -148,6 +181,8 @@ def main() -> None:
 
     if args.mode == "constant" and args.train_seed is None:
         parser.error("--train-seed is required in constant mode.")
+    if args.init_checkpoint is not None and args.mode != "per-instance":
+        parser.error("--init-checkpoint is only supported in per-instance mode.")
     target_seeds = None
     if args.target_seeds_file is not None:
         if args.mode != "per-instance":
@@ -175,6 +210,13 @@ def main() -> None:
         run_constant_mode(args, config, run_dir, start_time)
         return
 
+    initial_action_fn = None
+    if args.init_checkpoint is not None:
+        agent = load_policy_for_config(checkpoint_path=args.init_checkpoint, config=config, device="cpu")
+
+        def initial_action_fn(observation: np.ndarray) -> np.ndarray:
+            return _action_from_agent(agent, observation, device="cpu").astype(np.float64)
+
     result = run_oracle(
         config,
         budget=args.budget,
@@ -183,6 +225,8 @@ def main() -> None:
         num_instances=args.num_instances,
         evaluation_seed=args.evaluation_seed,
         target_seeds=target_seeds,
+        initial_action_fn=initial_action_fn,
+        initial_sigma=args.initial_sigma,
     )
     write_rows(run_dir / "oracle.csv", result.rows, fieldnames=ORACLE_FIELDS)
     np.save(run_dir / "oracle_actions.npy", result.best_actions)
@@ -221,6 +265,10 @@ def main() -> None:
         "evaluation_seed": args.evaluation_seed,
         "search_rng_rule": "default_rng([search_seed, target_seed])",
         "compare_run_dirs": list(args.compare_run_dir),
+        "init_checkpoint": args.init_checkpoint,
+        "init_checkpoint_sha256": None if args.init_checkpoint is None else sha256_file(args.init_checkpoint),
+        "initial_sigma": args.initial_sigma,
+        "initial_action_rule": INITIAL_ACTION_RULE if args.init_checkpoint is not None else None,
     }
     if args.target_seeds_file is not None:
         metadata["oracle"]["target_seeds_file"] = seed_file_record(args.target_seeds_file)

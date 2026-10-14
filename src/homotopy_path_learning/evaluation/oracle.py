@@ -68,6 +68,7 @@ def search_best_action(
     n_random: int,
     initial_sigma: float = 0.3,
     min_sigma: float = 1.0e-3,
+    initial_action: npt.NDArray[np.float64] | None = None,
 ) -> OracleSearchResult:
     """Minimize ``objective`` over the box ``[-action_limit, action_limit]^dim``.
 
@@ -83,6 +84,15 @@ def search_best_action(
        it is multiplied by ``1.5`` on a strict improvement and by
        ``1.5 ** -0.25`` otherwise, and kept in
        ``[min_sigma, 2] * action_limit``.
+
+    If ``initial_action`` (shape ``(dim,)``, finite, every entry within
+    ``[-action_limit, action_limit]``; it is copied, never mutated or clipped)
+    is given, the order becomes: (1) the zero action, (2) ``initial_action``,
+    (3) ``n_random - 2`` uniform samples, (4) the evolution strategy for the
+    remaining ``budget - n_random`` evaluations, started from the best point
+    so far. This requires ``n_random >= 2``; ``costs[1]`` is then the cost of
+    ``initial_action``. With ``initial_action=None`` the order and the random
+    number consumption are those described above.
 
     ``initial_sigma`` and ``min_sigma`` are relative to ``action_limit``.
     The objective receives a fresh ``float64`` array of shape ``(dim,)`` and
@@ -111,6 +121,21 @@ def search_best_action(
     if not (np.isfinite(sigma_floor) and 0.0 < sigma_floor <= sigma0):
         raise ValueError("min_sigma must satisfy 0 < min_sigma <= initial_sigma.")
 
+    warm_start: npt.NDArray[np.float64] | None = None
+    if initial_action is not None:
+        warm_start = np.array(initial_action, dtype=np.float64, copy=True)
+        if warm_start.shape != (dim_value,):
+            raise ValueError(f"initial_action must have shape ({dim_value},), got {warm_start.shape}.")
+        if not np.all(np.isfinite(warm_start)):
+            raise ValueError("initial_action must be finite.")
+        if np.any(np.abs(warm_start) > limit):
+            raise ValueError(
+                f"initial_action must lie within [-{limit}, {limit}], "
+                f"got max abs {float(np.max(np.abs(warm_start)))}."
+            )
+        if n_random_value < 2:
+            raise ValueError("n_random must be at least 2 when initial_action is given.")
+
     costs: list[float] = []
 
     zero = np.zeros(dim_value, dtype=np.float64)
@@ -119,7 +144,15 @@ def search_best_action(
     best_action = zero
     best_cost = zero_cost
 
-    for _ in range(n_random_value - 1):
+    n_uniform = n_random_value - 1
+    if warm_start is not None:
+        warm_cost = _objective_value(objective, warm_start)
+        costs.append(warm_cost)
+        if warm_cost < best_cost:
+            best_action, best_cost = warm_start, warm_cost
+        n_uniform -= 1
+
+    for _ in range(n_uniform):
         candidate = rng.uniform(-limit, limit, size=dim_value)
         cost = _objective_value(objective, candidate)
         costs.append(cost)
@@ -247,6 +280,8 @@ def run_oracle(
     evaluation_seed: int | None = None,
     backend: object | None = None,
     target_seeds: Sequence[int] | None = None,
+    initial_action_fn: Callable[[npt.NDArray[np.float32]], npt.NDArray[np.float64]] | None = None,
+    initial_sigma: float = 0.3,
 ) -> OracleRun:
     """Search the best latent action separately for each evaluation instance.
 
@@ -261,6 +296,14 @@ def run_oracle(
     to :func:`build_env` and is intended for tests. ``target_seeds``, when
     given, is the explicit ordered list of target seeds (``instance_id`` is the
     position in the list) and excludes ``num_instances``/``evaluation_seed``.
+
+    ``initial_action_fn``, when given, enables the policy-initialized search:
+    it receives the instance observation (``float32``, shape ``(obs_dim,)``)
+    and returns the initial action (shape ``(action_dim,)``, within the action
+    box), which is evaluated second (``cost_traces[:, 1]``); see
+    :func:`search_best_action` (requires ``n_random >= 2``). ``initial_sigma``
+    is the relative initial step size of the evolution strategy. The default
+    (``None``) leaves the search unchanged.
     """
 
     if target_seeds is not None:
@@ -291,6 +334,12 @@ def run_oracle(
             def objective(action: npt.NDArray[np.float64]) -> float:
                 return float(env.evaluate_action_against_context(context, action).tracking_cost.mean)
 
+            initial_action = None
+            if initial_action_fn is not None:
+                initial_action = np.asarray(
+                    initial_action_fn(np.array(observations[-1], dtype=np.float32, copy=True)),
+                    dtype=np.float64,
+                )
             result = search_best_action(
                 objective,
                 dim=action_dim,
@@ -298,6 +347,8 @@ def run_oracle(
                 rng=np.random.default_rng([int(search_seed), int(target_seed)]),
                 budget=budget,
                 n_random=n_random,
+                initial_sigma=initial_sigma,
+                initial_action=initial_action,
             )
             best = env.evaluate_action_against_context(context, result.best_action)
             if float(best.tracking_cost.mean) != result.best_cost:

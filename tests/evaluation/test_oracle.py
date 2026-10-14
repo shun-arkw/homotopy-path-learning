@@ -407,3 +407,171 @@ def test_near_best_action_stats_zero_vector_and_single_good():
 def test_near_best_action_stats_rejects_invalid_inputs(costs, actions, tolerance):
     with pytest.raises(ValueError):
         near_best_action_stats(costs, actions, tolerance=tolerance)
+
+
+def test_search_without_initial_action_matches_recorded_baseline():
+    # Values recorded before initial_action was added; they must not change.
+    center = np.array([0.4, -0.3, 0.2])
+    result = search_best_action(
+        quadratic(center), dim=3, action_limit=1.0, rng=np.random.default_rng(7), budget=30, n_random=8
+    )
+
+    assert result.best_cost == 0.10613744538337302
+    assert result.costs[[0, 1, 7, 8, 15, 29]].tolist() == [
+        0.29000000000000004,
+        1.3436763794066913,
+        2.2492541612368675,
+        0.24190433154353788,
+        0.6435132313090588,
+        0.24651223667248637,
+    ]
+    assert result.best_action.tolist() == [0.225482234104947, -0.34294007751595873, -0.0717299109654584]
+    assert float(result.costs.sum()) == pytest.approx(22.6082889041046, rel=0, abs=1e-12)
+
+
+def test_search_with_initial_action_evaluates_it_second():
+    center = np.array([0.4, -0.3, 0.2])
+    initial = np.array([0.5, -0.2, 0.1])
+    result = search_best_action(
+        quadratic(center),
+        dim=3,
+        action_limit=1.0,
+        rng=np.random.default_rng(7),
+        budget=30,
+        n_random=8,
+        initial_action=initial,
+    )
+
+    assert len(result.costs) == 30
+    assert result.costs[0] == result.zero_cost == pytest.approx(float(np.sum(center**2)))
+    assert result.costs[1] == pytest.approx(float(np.sum((initial - center) ** 2)))
+    assert result.best_cost <= min(result.costs[0], result.costs[1])
+    assert result.best_cost == pytest.approx(float(np.min(result.costs)))
+
+
+def test_search_uses_two_fewer_uniform_samples_with_initial_action():
+    seen: list[np.ndarray] = []
+
+    def objective(action: np.ndarray) -> float:
+        seen.append(action.copy())
+        return float(np.sum(action**2)) + 1.0
+
+    initial = np.array([0.25, 0.25])
+    search_best_action(
+        objective, dim=2, action_limit=1.0, rng=np.random.default_rng(5), budget=6, n_random=4, initial_action=initial
+    )
+
+    np.testing.assert_array_equal(seen[0], np.zeros(2))
+    np.testing.assert_array_equal(seen[1], initial)
+    expected = np.random.default_rng(5).uniform(-1.0, 1.0, size=(2, 2))
+    np.testing.assert_array_equal(np.stack(seen[2:4]), expected)
+
+
+def test_search_returns_minimum_when_initial_action_is_minimizer():
+    center = np.array([0.4, -0.3, 0.2])
+    result = search_best_action(
+        quadratic(center),
+        dim=3,
+        action_limit=1.0,
+        rng=np.random.default_rng(0),
+        budget=20,
+        n_random=4,
+        initial_action=center,
+    )
+
+    assert result.costs[1] == 0.0
+    assert result.best_cost == 0.0
+    np.testing.assert_array_equal(result.best_action, center)
+
+
+def test_search_does_not_mutate_initial_action():
+    initial = np.array([0.3, -0.4])
+    original = initial.copy()
+
+    def objective(action: np.ndarray) -> float:
+        action[:] = 99.0
+        return float(np.sum(action**2))
+
+    result = search_best_action(
+        lambda a: float(np.sum((a - 0.1) ** 2)),
+        dim=2,
+        action_limit=1.0,
+        rng=np.random.default_rng(0),
+        budget=10,
+        n_random=3,
+        initial_action=initial,
+    )
+    search_best_action(
+        objective, dim=2, action_limit=1.0, rng=np.random.default_rng(0), budget=10, n_random=3, initial_action=initial
+    )
+
+    np.testing.assert_array_equal(initial, original)
+    assert result.best_action is not initial
+
+
+@pytest.mark.parametrize(
+    ("initial_action", "n_random"),
+    [
+        (np.zeros(3), 5),
+        (np.zeros((2, 1)), 5),
+        (np.array([1.5, 0.0]), 5),
+        (np.array([0.0, -1.0001]), 5),
+        (np.array([np.nan, 0.0]), 5),
+        (np.array([np.inf, 0.0]), 5),
+        (np.zeros(2), 1),
+    ],
+)
+def test_search_rejects_invalid_initial_action(initial_action, n_random):
+    with pytest.raises(ValueError):
+        search_best_action(
+            quadratic(np.zeros(2)),
+            dim=2,
+            action_limit=1.0,
+            rng=np.random.default_rng(0),
+            budget=10,
+            n_random=n_random,
+            initial_action=initial_action,
+        )
+
+
+def test_run_oracle_with_initial_action_fn_records_its_cost():
+    config = load_config(SMOKE_CONFIG)
+    provided = np.full(8, 0.05)
+    observed: list[np.ndarray] = []
+
+    def initial_action_fn(observation: np.ndarray) -> np.ndarray:
+        observed.append(observation.copy())
+        return provided
+
+    backend = DeviationBackend()
+    result = run_oracle(
+        config,
+        budget=30,
+        n_random=10,
+        search_seed=2,
+        num_instances=2,
+        backend=backend,
+        initial_action_fn=initial_action_fn,
+        initial_sigma=0.2,
+    )
+
+    assert len(observed) == 2
+    assert observed[0].dtype == np.float32 and observed[0].shape == (12,)
+    np.testing.assert_array_equal(np.stack(observed), result.observations)
+    reference = run_oracle(config, budget=30, n_random=10, search_seed=2, num_instances=1, backend=DeviationBackend())
+    expected = run_oracle(
+        config,
+        budget=2,
+        n_random=2,
+        search_seed=2,
+        num_instances=1,
+        backend=DeviationBackend(),
+        initial_action_fn=lambda obs: provided,
+    )
+    assert result.cost_traces.shape == (2, 30)
+    np.testing.assert_array_equal(result.cost_traces[:, 0], [110.0, 110.0])
+    assert result.cost_traces[0, 1] == expected.cost_traces[0, 1]
+    assert reference.cost_traces.shape == (1, 30)
+    for row, trace in zip(result.rows, result.cost_traces):
+        assert row["oracle_cost"] <= min(trace[0], trace[1])
+        assert row["n_evaluations"] == 30
