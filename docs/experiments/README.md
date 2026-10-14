@@ -459,3 +459,23 @@ n5-d22222とn5-d33333で，多点スタートの強い探索（$d_b=2$と$3$）�
 生成物:    外部サーバのoutputs/EXP-0034/<run-id>/（実行スクリプトはoutputs/EXP-0034/scripts/）
 ```
 
+### EXP-0035：方策を初期値にした探索による上限の目安の測り直し（n5）
+
+EXP-0033の上限の目安を，微調整後のattention方策の行動を初期値にした探索で測り直し，今の設定で50%削減に届くかを改めて判定する．`oracle.py`に方策の行動を初期値にする機能を追加する．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d22222-db2.yaml，exp-0028-n5-d33333-db2.yaml
+実験記録:  docs/experiments/EXP-0035-policy-initialized-bound-n5/
+生成物:    外部サーバのoutputs/EXP-0035/<run-id>/（実行スクリプトはoutputs/EXP-0035/scripts/）
+```
+
+### EXP-0036：n5-d33333の微調整の延長（2000反復→4000反復）
+
+EXP-0034のattention方策の微調整を，同じ設定でさらに2000反復続け，試験500問題で2000反復の方策と比べる．外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0028-n5-d33333-db2.yaml
+実験記録:  docs/experiments/EXP-0036-finetune-extension-n5-d33333/
+生成物:    外部サーバのoutputs/EXP-0036/<run-id>/（実行スクリプトはoutputs/EXP-0036/scripts/）
+```
+
