@@ -569,3 +569,13 @@ EXP-0040と同じ計測を，全8系の種類の標準の手順のネットワ�
 生成物:    outputs/EXP-0045/（実行スクリプトはoutputs/EXP-0045/scripts/）
 ```
 
+### EXP-0046：複数の目的系をまとめたときのネットワークの計算時間（GPU）
+
+EXP-0045と同じ計測を，ネットワークをGPU（RTX A5000）に置いて行う．バッチの大きさごとの1回あたりと目的系1つあたりの時間を測る．メインの環境で実行する．
+
+```text
+実行設定:  各ネットワークのrunの設定（EXP-0045と同じ）
+実験記録:  docs/experiments/EXP-0046-batched-network-time-gpu/
+生成物:    outputs/EXP-0046/（実行スクリプトはoutputs/EXP-0046/scripts/）
+```
+
