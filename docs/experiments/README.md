@@ -609,3 +609,13 @@ EXP-0048でn5-d33333からn6-d333333へ転用したネットワーク（3つ）�
 実験記録:  docs/experiments/EXP-0049-finetune-transferred-n6-d333333/
 生成物:    outputs/EXP-0049/<run-id>/と外部サーバのoutputs/EXP-0049/（実行スクリプトは各outputs/EXP-0049/scripts/）
 ```
+
+### EXP-0050：ベジェ次数$d_b=3$の標準の手順（n5-d22222，n5-d33333）
+
+EXP-0047（n4-d3333）と同じ$d_b=3$の標準の手順（予算500）を，n5-d22222とn5-d33333で行い，$d_b=2$の標準の手順（EXP-0031，EXP-0034）と比べる．判断は開発集合，報告用の値はテストデータで1回だけ求める．メインの環境と外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0033-n5-d22222-db3.yaml，exp-0033-n5-d33333-db3.yaml
+実験記録:  docs/experiments/EXP-0050-db3-pipeline-n5/
+生成物:    outputs/EXP-0050/<run-id>/と外部サーバのoutputs/EXP-0050/（実行スクリプトは各outputs/EXP-0050/scripts/）
+```
