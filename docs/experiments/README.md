@@ -599,3 +599,13 @@ n5とn4の標準の手順のネットワーク（各3つ）を，学習し直さ
 実験記録:  docs/experiments/EXP-0048-zero-shot-transfer-n6/
 生成物:    outputs/EXP-0048/<run-id>/（実行スクリプトはoutputs/EXP-0048/scripts/）
 ```
+
+### EXP-0049：n5から転用したネットワークをn6-d333333で微調整する
+
+EXP-0048でn5-d33333からn6-d333333へ転用したネットワーク（3つ）に，教師データを作らずに標準の手順の微調整だけを行い，転用からの伸びを測る．外部サーバ（seed 0，1）とメインの環境（seed 2）で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0049-n6-d333333-db2.yaml
+実験記録:  docs/experiments/EXP-0049-finetune-transferred-n6-d333333/
+生成物:    outputs/EXP-0049/<run-id>/と外部サーバのoutputs/EXP-0049/（実行スクリプトは各outputs/EXP-0049/scripts/）
+```
