@@ -579,3 +579,13 @@ EXP-0045と同じ計測を，ネットワークをGPU（RTX A5000）に置いて
 生成物:    outputs/EXP-0046/（実行スクリプトはoutputs/EXP-0046/scripts/）
 ```
 
+
+### EXP-0047：ベジェ次数$d_b=3$の標準の手順（n4-d3333）
+
+n4-d3333で，$d_b=3$の標準の手順（ゼロからの探索の教師データ → attentionの教師あり学習 → 微調整）を，探索の予算500と1000の2つの腕で行い，$d_b=2$の標準の手順（EXP-0023）と比べる．判断は開発集合，報告用の値は試験集合で1回だけ求める．腕B500はメインの環境，腕B1000は外部サーバで実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0018-n4-d3333-db3.yaml
+実験記録:  docs/experiments/EXP-0047-db3-pipeline-n4-d3333/
+生成物:    outputs/EXP-0047/<run-id>/と外部サーバのoutputs/EXP-0047/（実行スクリプトは各outputs/EXP-0047/scripts/）
+```
