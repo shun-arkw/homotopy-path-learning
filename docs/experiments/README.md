@@ -589,3 +589,13 @@ n4-d3333で，$d_b=3$の標準の手順（ゼロからの探索の教師デー�
 実験記録:  docs/experiments/EXP-0047-db3-pipeline-n4-d3333/
 生成物:    outputs/EXP-0047/<run-id>/と外部サーバのoutputs/EXP-0047/（実行スクリプトは各outputs/EXP-0047/scripts/）
 ```
+
+### EXP-0048：小さい系で学習したネットワークをそのままn6に使う（学習なしの転用）
+
+n5とn4の標準の手順のネットワーク（各3つ）を，学習し直さずにn6-d222222とn6-d333333に転用し，テストデータでの削減率を求める．今後作るn6専用のネットワークと比べる基準にする．n6の目的系の集合（テスト・開発・学習用）もここで予約する．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0048-n6-d222222-db2.yaml，exp-0048-n6-d333333-db2.yaml
+実験記録:  docs/experiments/EXP-0048-zero-shot-transfer-n6/
+生成物:    outputs/EXP-0048/<run-id>/（実行スクリプトはoutputs/EXP-0048/scripts/）
+```
