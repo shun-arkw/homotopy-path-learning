@@ -1,5 +1,9 @@
 """Multivariate Bezier homotopy for fixed Pham-type supports."""
 
+# Highest Taylor order that `ModelKit.taylor!` can return. HomotopyContinuation.jl's
+# Pade (2,1) predictor requests orders 1 to 3.
+const MAX_TAYLOR_ORDER = 4
+
 mutable struct BezierPhamHomotopy <: AbstractHomotopy
     spec::PolynomialSystemSpec
     bezier_degree::Int
@@ -43,13 +47,14 @@ function BezierPhamHomotopy(
     max_derivative_order::Int = min(4, bezier_degree),
 )
     bezier_degree >= 1 || throw(ArgumentError("bezier_degree must be positive."))
-    0 <= max_derivative_order <= bezier_degree ||
-        throw(ArgumentError("max_derivative_order must satisfy 0 <= k <= bezier_degree."))
+    0 <= max_derivative_order <= MAX_TAYLOR_ORDER ||
+        throw(ArgumentError("max_derivative_order must satisfy 0 <= k <= $MAX_TAYLOR_ORDER."))
 
     ctrl = _finite_complex_matrix("control_points", control_points)
     validate_control_points(spec, ctrl, bezier_degree)
-    diffs = compute_forward_differences(ctrl, max_derivative_order)
-    weight_buffers = [zeros(Float64, bezier_degree - order + 1) for order in 0:max_derivative_order]
+    diffs = compute_forward_differences(ctrl, min(max_derivative_order, bezier_degree))
+    # Coefficient derivatives above bezier_degree are zero and need no Bernstein weights.
+    weight_buffers = [zeros(Float64, max(bezier_degree - order + 1, 1)) for order in 0:max_derivative_order]
     coefficient_buffers = [zeros(ComplexF64, ncoeffs(spec)) for _ in 0:max_derivative_order]
     variables_cache = [Variable(Symbol("x", i)) for i in 1:spec.nvars]
 
@@ -69,7 +74,8 @@ function set_control_points!(H::BezierPhamHomotopy, control_points::AbstractMatr
     ctrl = _finite_complex_matrix("control_points", control_points)
     validate_control_points(H.spec, ctrl, H.bezier_degree)
     copyto!(H.control_points, ctrl)
-    H.coefficient_differences = compute_forward_differences(H.control_points, H.max_derivative_order)
+    H.coefficient_differences =
+        compute_forward_differences(H.control_points, min(H.max_derivative_order, H.bezier_degree))
     return H
 end
 
@@ -233,15 +239,77 @@ function _constant_term(value)
     end
 end
 
+# Coefficient `j` (0-based) of the Taylor series of one variable, as passed by
+# HomotopyContinuation.jl: a number (only the constant term), a
+# `TruncatedTaylorSeries` (0-based indexing) or a tuple (1-based indexing).
+_taylor_entry(value::Number, j::Int) = j == 0 ? ComplexF64(value) : 0.0 + 0.0im
+_taylor_entry(value::Tuple, j::Int) = j < length(value) ? ComplexF64(value[j + 1]) : 0.0 + 0.0im
+_taylor_entry(value, j::Int) = j < length(value) ? ComplexF64(value[j]) : 0.0 + 0.0im
+
+"""
+    ModelKit.taylor!(out, Val(k), H::BezierPhamHomotopy, tx, t)
+
+Write the coefficient of `λ^k` in the Taylor expansion of `H(x(t + λ), t + λ)` into
+`out` (length `nvars`), where the series of `x` is given by `tx` up to order `k - 1`
+(higher orders in `tx` are ignored), as HomotopyContinuation.jl's predictor expects.
+With `τ = 1 - t`, the coefficient vector contributes `(-1)^j c^{(j)}(τ) / j!` at order `j`.
+Orders above `H.max_derivative_order` return zeros (this is how the tracking homotopy
+restricts the predictor to first-order data).
+"""
 function ModelKit.taylor!(out, ::Val{k}, H::BezierPhamHomotopy, tx, t) where {k}
     if k > H.max_derivative_order
         fill!(out, 0.0 + 0.0im)
         return out
     end
+    if k == 1
+        # First order only needs x(t) itself: -c'(τ) evaluated at x.
+        tau = 1.0 - Float64(real(t))
+        coeffs = coefficient_vector!(H.coefficient_buffers[k + 1], H, tau, k)
+        x = [_constant_term(tx[i]) for i in 1:H.spec.nvars]
+        scale = isodd(k) ? -1 : 1
+        evaluate_system!(out, H.spec, coeffs, x; coefficient_scale = scale)
+        return out
+    end
+    return _taylor_coefficient!(out, H, tx, t, k)
+end
+
+function _series_mul!(dst::Vector{ComplexF64}, a::Vector{ComplexF64}, b::Vector{ComplexF64})
+    order = length(dst) - 1
+    for j in 0:order
+        value = 0.0 + 0.0im
+        for i in 0:j
+            value += a[i + 1] * b[j - i + 1]
+        end
+        dst[j + 1] = value
+    end
+    return dst
+end
+
+function _taylor_coefficient!(out, H::BezierPhamHomotopy, tx, t, k::Int)
+    spec = H.spec
+    n = spec.nvars
     tau = 1.0 - Float64(real(t))
-    coeffs = coefficient_vector!(H.coefficient_buffers[k + 1], H, tau, k)
-    x = [_constant_term(tx[i]) for i in 1:H.spec.nvars]
-    scale = isodd(k) ? -1 : 1
-    evaluate_system!(out, H.spec, coeffs, x; coefficient_scale = scale)
+    for j in 0:k
+        coefficient_vector!(H.coefficient_buffers[j + 1], H, tau, j)
+    end
+    xseries = [ComplexF64[j <= k - 1 ? _taylor_entry(tx[i], j) : 0.0 + 0.0im for j in 0:k] for i in 1:n]
+    monomial = zeros(ComplexF64, k + 1)
+    product = zeros(ComplexF64, k + 1)
+    for equation_index in 1:n
+        value = 0.0 + 0.0im
+        for q in spec.offsets[equation_index]:(spec.offsets[equation_index + 1] - 1)
+            fill!(monomial, 0.0 + 0.0im)
+            monomial[1] = 1.0 + 0.0im
+            for variable_index in 1:n, _ in 1:spec.exponents[q, variable_index]
+                _series_mul!(product, monomial, xseries[variable_index])
+                copyto!(monomial, product)
+            end
+            for j in 0:k
+                coefficient = H.coefficient_buffers[j + 1][q] * ((isodd(j) ? -1.0 : 1.0) / factorial(j))
+                value += coefficient * monomial[k - j + 1]
+            end
+        end
+        out[equation_index] = value
+    end
     return out
 end

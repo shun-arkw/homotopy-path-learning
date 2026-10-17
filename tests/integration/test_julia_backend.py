@@ -210,3 +210,48 @@ def test_reinitialization_clears_previous_state_safely() -> None:
         assert result.success
     finally:
         backend.close()
+
+
+def test_default_tracker_parameters_match_explicit_defaults() -> None:
+    spec = make_spec()
+    control_points = linear_control_points()
+    explicit = TrackerConfig(
+        a=0.125,
+        beta_a=1.0,
+        beta_omega_p=3.0,
+        beta_tau=0.4,
+        strict_beta_tau=0.4 * 0.75,
+        min_newton_iters=2,
+        predictor_order=1,
+    )
+
+    with JuliaTrackerBackend() as backend:
+        backend.initialize(spec, 3, TrackerConfig())
+        default = backend.track(control_points)
+        backend.initialize(spec, 3, explicit)
+        assert backend.state_snapshot()["predictor_order"] == 1
+        same = backend.track(control_points)
+
+    assert_same_tracking_result(default, same)
+
+
+def test_tracker_parameters_and_predictor_order_reach_julia() -> None:
+    spec = make_spec()
+    control_points = linear_control_points()
+
+    with JuliaTrackerBackend() as backend:
+        backend.initialize(spec, 3, TrackerConfig())
+        reference = backend.track(control_points)
+        backend.initialize(spec, 3, TrackerConfig(beta_omega_p=0.8, max_step_size=1.0))
+        aggressive = backend.track(control_points)
+        backend.initialize(spec, 3, TrackerConfig(predictor_order=3))
+        assert backend.state_snapshot()["predictor_order"] == 3
+        third_order = backend.track(control_points)
+
+    for result in (aggressive, third_order):
+        assert result.success
+        assert np.max(result.residual_norms) < 1e-8
+        order = np.lexsort((result.endpoints.imag[:, 0], result.endpoints.real[:, 0]))
+        expected = np.lexsort((reference.endpoints.imag[:, 0], reference.endpoints.real[:, 0]))
+        np.testing.assert_allclose(result.endpoints[order], reference.endpoints[expected], atol=1e-8)
+    assert aggressive.accepted_steps < reference.accepted_steps

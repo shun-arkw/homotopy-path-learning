@@ -53,6 +53,14 @@ tracker:
   max_steps: 50000
   min_step_size: 1.0e-12
   extended_precision: false
+  # 省略可能（EXP-0053，EXP-0054）．省略時は次の値で，それまでと同じ追跡になる．
+  # a: 0.125
+  # beta_a: 1.0
+  # beta_omega_p: 3.0
+  # beta_tau: 0.4
+  # strict_beta_tau: null   # null は min(0.75 * beta_tau, 0.4)
+  # min_newton_iters: 2
+  # predictor_order: 1      # 1 または 3（julia_homotopy.md の10.1節）
 
 reward:
   rejected_step_weight: 1.0

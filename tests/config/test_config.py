@@ -6,6 +6,7 @@ import pytest
 
 from homotopy_path_learning.config import (
     ConfigError,
+    build_tracker_config,
     config_to_dict,
     load_config,
     parse_config_dict,
@@ -129,3 +130,62 @@ def test_all_existing_yaml_configs_still_parse() -> None:
         assert load_config(path).ppo.actor_type == "mlp"
         parsed += 1
     assert parsed > 30
+
+
+def test_optional_tracker_keys_default_and_validate() -> None:
+    config = load_config(SMOKE_CONFIG)
+    tracker = build_tracker_config(config)
+    assert (tracker.a, tracker.beta_a, tracker.beta_omega_p, tracker.beta_tau) == (0.125, 1.0, 3.0, 0.4)
+    assert tracker.strict_beta_tau is None
+    assert tracker.min_newton_iters == 2
+    assert tracker.predictor_order == 1
+
+    data = config_to_dict(config)
+    data["tracker"].update(
+        {
+            "a": 0.2,
+            "beta_a": 1.5,
+            "beta_omega_p": 0.8,
+            "beta_tau": 0.85,
+            "strict_beta_tau": 0.8,
+            "min_newton_iters": 1,
+            "predictor_order": 3,
+        }
+    )
+    tracker = build_tracker_config(parse_config_dict(data))
+    assert (tracker.a, tracker.beta_a, tracker.beta_omega_p, tracker.beta_tau) == (0.2, 1.5, 0.8, 0.85)
+    assert (tracker.strict_beta_tau, tracker.min_newton_iters, tracker.predictor_order) == (0.8, 1, 3)
+
+    for key, value, match in [
+        ("predictor_order", 2, "predictor_order"),
+        ("beta_tau", 2.0, "beta_tau"),
+        ("a", 1.0, "a must be < 1"),
+        ("min_newton_iters", 1.5, "integer"),
+        ("beta_omega_p", 0.0, "positive"),
+    ]:
+        bad = config_to_dict(config)
+        bad["tracker"][key] = value
+        with pytest.raises(ConfigError, match=match):
+            parse_config_dict(bad)
+
+    bad = config_to_dict(config)
+    bad["tracker"]["beta_omega"] = 1.0
+    with pytest.raises(ConfigError, match="unknown"):
+        parse_config_dict(bad)
+
+
+def test_config_without_optional_tracker_keys_equals_explicit_defaults() -> None:
+    config = load_config(SMOKE_CONFIG)
+    data = config_to_dict(config)
+    data["tracker"].update(
+        {
+            "a": 0.125,
+            "beta_a": 1.0,
+            "beta_omega_p": 3.0,
+            "beta_tau": 0.4,
+            "strict_beta_tau": None,
+            "min_newton_iters": 2,
+            "predictor_order": 1,
+        }
+    )
+    assert parse_config_dict(data) == config

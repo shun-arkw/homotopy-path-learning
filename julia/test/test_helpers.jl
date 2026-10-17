@@ -92,3 +92,69 @@ function manual_jacobian(spec, coeffs, x)
     end
     return J
 end
+
+# Pham spec with linear lower-order terms: per equation the leading monomial,
+# x_1, ..., x_n and the constant term (the same layout as the Python side).
+function pham_test_spec(degrees::Vector{Int})
+    n = length(degrees)
+    rows = Vector{Vector{Int}}()
+    offsets = Int[0]
+    leading = Int[]
+    constant = Int[]
+    for i in 1:n
+        lead = zeros(Int, n)
+        lead[i] = degrees[i]
+        push!(leading, length(rows))
+        push!(rows, lead)
+        for j in 1:n
+            e = zeros(Int, n)
+            e[j] = 1
+            push!(rows, e)
+        end
+        push!(constant, length(rows))
+        push!(rows, zeros(Int, n))
+        push!(offsets, length(rows))
+    end
+    exponents = permutedims(reduce(hcat, rows))
+    return from_python_spec(degrees, exponents, offsets, leading, constant)
+end
+
+function random_pham_coefficients(spec, seed::Int)
+    coeffs = zeros(ComplexF64, size(spec.exponents, 1))
+    for q in eachindex(coeffs)
+        a = sin(1.3 * q + seed)
+        b = cos(0.7 * q - seed)
+        coeffs[q] = complex(a, b)
+    end
+    coeffs[spec.leading_indices] .= 1.0 + 0.0im
+    return coeffs
+end
+
+function random_control_points(spec, start, target, bezier_degree::Int, seed::Int)
+    control_points = linear_control_points(start, target, bezier_degree)
+    for row in 2:bezier_degree, q in axes(control_points, 2)
+        control_points[row, q] += 0.2 * complex(sin(seed + 2.1 * row + q), cos(seed - row + 0.3 * q))
+    end
+    control_points[:, spec.leading_indices] .= 1.0 + 0.0im
+    return control_points
+end
+
+# The same homotopy built symbolically with ModelKit (t = 1 at the start system).
+function reference_bezier_homotopy(spec, control_points, bezier_degree::Int)
+    n = spec.nvars
+    @var x[1:n] t
+    τ = 1 - t
+    equations = Expression[]
+    for i in 1:n
+        f = Expression(0)
+        for q in spec.offsets[i]:(spec.offsets[i + 1] - 1)
+            c = sum(
+                binomial(bezier_degree, r) * τ^r * (1 - τ)^(bezier_degree - r) * control_points[r + 1, q]
+                for r in 0:bezier_degree
+            )
+            f += c * prod(x[j]^spec.exponents[q, j] for j in 1:n)
+        end
+        push!(equations, f)
+    end
+    return InterpretedHomotopy(Homotopy(equations, x, t))
+end

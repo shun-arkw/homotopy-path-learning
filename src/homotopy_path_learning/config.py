@@ -54,6 +54,16 @@ class TrackerSettings:
     max_initial_step_size: float
     min_step_size: float
     extended_precision: bool
+    # Optional keys (EXP-0053, EXP-0054). The defaults reproduce the tracking of all
+    # earlier runs: HomotopyContinuation.jl's DEFAULT_TRACKER_PARAMETERS and a
+    # first-order predictor. See ``backends.types.TrackerConfig``.
+    a: float = 0.125
+    beta_a: float = 1.0
+    beta_omega_p: float = 3.0
+    beta_tau: float = 0.4
+    strict_beta_tau: float | None = None
+    min_newton_iters: int = 2
+    predictor_order: int = 1
 
 
 @dataclass(frozen=True)
@@ -213,6 +223,25 @@ def _bool(value: Any, *, name: str) -> bool:
     return value
 
 
+def _optional_tracker_settings(tracker_raw: dict[str, Any]) -> dict[str, Any]:
+    """Parse the optional tracker keys; omitted keys keep the ``TrackerSettings`` defaults."""
+
+    settings: dict[str, Any] = {}
+    for key in ("a", "beta_a", "beta_omega_p", "beta_tau"):
+        if key in tracker_raw:
+            settings[key] = _float(tracker_raw[key], name=f"tracker.{key}", positive=True)
+    if "strict_beta_tau" in tracker_raw and tracker_raw["strict_beta_tau"] is not None:
+        settings["strict_beta_tau"] = _float(
+            tracker_raw["strict_beta_tau"],
+            name="tracker.strict_beta_tau",
+            positive=True,
+        )
+    for key in ("min_newton_iters", "predictor_order"):
+        if key in tracker_raw:
+            settings[key] = _int(tracker_raw[key], name=f"tracker.{key}", positive=True)
+    return settings
+
+
 def _str(value: Any, *, name: str, nonempty: bool = False) -> str:
     if not isinstance(value, str):
         raise ConfigError(f"{name} must be a string, got {value!r}.")
@@ -294,6 +323,15 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
             "max_initial_step_size",
             "min_step_size",
             "extended_precision",
+        },
+        optional={
+            "a",
+            "beta_a",
+            "beta_omega_p",
+            "beta_tau",
+            "strict_beta_tau",
+            "min_newton_iters",
+            "predictor_order",
         },
     )
     env_raw = _mapping(
@@ -388,6 +426,7 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
         ),
         min_step_size=_float(tracker_raw["min_step_size"], name="tracker.min_step_size", positive=True),
         extended_precision=_bool(tracker_raw["extended_precision"], name="tracker.extended_precision"),
+        **_optional_tracker_settings(tracker_raw),
     )
     environment = EnvironmentSettings(
         reject_weight=_float(env_raw["reject_weight"], name="environment.reject_weight", nonnegative=True),
@@ -500,6 +539,10 @@ def validate_config(config: Phase6Config) -> None:
         raise ConfigError("tracker.min_step_size must be <= tracker.max_step_size.")
     if config.tracker.min_step_size > config.tracker.max_initial_step_size:
         raise ConfigError("tracker.min_step_size must be <= tracker.max_initial_step_size.")
+    try:
+        build_tracker_config(config)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"tracker: {exc}") from exc
     build_system_spec(config)
 
 
@@ -597,6 +640,13 @@ def build_tracker_config(config: Phase6Config) -> TrackerConfig:
         max_initial_step_size=config.tracker.max_initial_step_size,
         min_step_size=config.tracker.min_step_size,
         extended_precision=config.tracker.extended_precision,
+        a=config.tracker.a,
+        beta_a=config.tracker.beta_a,
+        beta_omega_p=config.tracker.beta_omega_p,
+        beta_tau=config.tracker.beta_tau,
+        strict_beta_tau=config.tracker.strict_beta_tau,
+        min_newton_iters=config.tracker.min_newton_iters,
+        predictor_order=config.tracker.predictor_order,
     )
 
 

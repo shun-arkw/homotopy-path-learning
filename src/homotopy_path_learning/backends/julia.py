@@ -411,6 +411,12 @@ def _make_tracker_options(runtime: _JuliaRuntime, config: TrackerConfig) -> Any:
             max_initial_step_size=config.max_initial_step_size,
             min_step_size=config.min_step_size,
             extended_precision=config.extended_precision,
+            a=config.a,
+            beta_a=config.beta_a,
+            beta_omega_p=config.beta_omega_p,
+            beta_tau=config.beta_tau,
+            strict_beta_tau=config.strict_beta_tau,
+            min_newton_iters=config.min_newton_iters,
         )
     except Exception as exc:
         raise JuliaAPIError("failed to construct Julia tracker options.") from exc
@@ -440,6 +446,7 @@ def _snapshot_to_python(snapshot: Any) -> dict[str, Any]:
             copy=True,
         ),
         "starts": np.array(_field(snapshot, "starts"), dtype=np.complex128, copy=True),
+        "predictor_order": int(_field(snapshot, "predictor_order")),
     }
 
 
@@ -513,6 +520,7 @@ class JuliaTrackerBackend:
                 arrays.constant_indices,
                 degree,
                 tracker_options=options,
+                predictor_order=tracker_config.predictor_order,
             )
         except Exception as exc:
             self._initialized = False

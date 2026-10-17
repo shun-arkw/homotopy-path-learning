@@ -94,17 +94,28 @@ function _target_residual_norm(H::BezierPhamHomotopy, endpoint::AbstractVector{<
     return norm(residual)
 end
 
-function _homotopy_for_tracking(H::BezierPhamHomotopy)
-    # HC 2.6.4's Pade predictor can become fragile on exactly linear
-    # coefficient paths when higher-order forward differences are roundoff
-    # sized rather than mathematically zero. First-order Taylor data is enough
-    # for a correct predictor-corrector smoke implementation.
-    H.max_derivative_order == 1 && return H
+# Highest Taylor order passed to HomotopyContinuation.jl's predictor.
+# 1 (the default, used by all experiments up to EXP-0052): only first-order data, so
+# the Pade predictor reduces to an Euler step and its trust region is not a distance
+# to the nearest singularity. 3: the data the (2,1) Pade predictor needs.
+# (The original note for order 1: HC 2.6.4's Pade predictor could become fragile on
+# exactly linear coefficient paths.)
+const SUPPORTED_PREDICTOR_ORDERS = (1, 3)
+
+function _check_predictor_order(predictor_order::Integer)
+    predictor_order in SUPPORTED_PREDICTOR_ORDERS ||
+        throw(ArgumentError("predictor_order must be one of $SUPPORTED_PREDICTOR_ORDERS, got $predictor_order."))
+    return Int(predictor_order)
+end
+
+function _homotopy_for_tracking(H::BezierPhamHomotopy, predictor_order::Integer = 1)
+    order = _check_predictor_order(predictor_order)
+    H.max_derivative_order == order && return H
     return BezierPhamHomotopy(
         H.spec,
         H.bezier_degree,
         H.control_points;
-        max_derivative_order = 1,
+        max_derivative_order = order,
     )
 end
 
@@ -112,10 +123,11 @@ function track_all_paths(
     H::BezierPhamHomotopy,
     starts::AbstractMatrix{<:Complex};
     tracker_options = nothing,
+    predictor_order::Integer = 1,
 )
     size(starts, 2) == H.spec.nvars || throw(ArgumentError("starts must have shape (n_paths, nvars)."))
 
-    tracking_H = _homotopy_for_tracking(H)
+    tracking_H = _homotopy_for_tracking(H, predictor_order)
     npaths = size(starts, 1)
     accepted = zeros(Int, npaths)
     rejected = zeros(Int, npaths)

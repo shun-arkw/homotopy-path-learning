@@ -35,6 +35,17 @@ def _require_positive_finite_float(name: str, value: object) -> float:
     return normalized
 
 
+SUPPORTED_PREDICTOR_ORDERS = (1, 3)
+
+
+def _require_open_unit_float(name: str, value: object, *, upper_inclusive: bool) -> float:
+    normalized = _require_positive_finite_float(name, value)
+    if normalized > 1.0 or (not upper_inclusive and normalized == 1.0):
+        bound = "<= 1" if upper_inclusive else "< 1"
+        raise ValueError(f"{name} must be {bound}, got {normalized}.")
+    return normalized
+
+
 @dataclass(frozen=True)
 class TrackerConfig:
     """Configuration for HomotopyContinuation.jl tracking.
@@ -47,6 +58,14 @@ class TrackerConfig:
             ``max_step_size`` or ``max_initial_step_size``.
         extended_precision: Boolean flag forwarded to the Julia tracker
             options.
+        a, beta_a, beta_omega_p, beta_tau, strict_beta_tau, min_newton_iters:
+            HomotopyContinuation.jl ``TrackerParameters`` (``a``, ``β_a``,
+            ``β_ω_p``, ``β_τ``, ``strict_β_τ``, ``min_newton_iters``). The
+            defaults are ``DEFAULT_TRACKER_PARAMETERS``; ``strict_beta_tau=None``
+            means HomotopyContinuation.jl's rule ``min(0.75 * beta_tau, 0.4)``.
+        predictor_order: Highest Taylor order passed to the predictor, 1 (the
+            default; first-order data only, as in all experiments up to
+            EXP-0052) or 3 (what the Pade (2,1) predictor needs).
     """
 
     max_steps: int = 50_000
@@ -54,6 +73,13 @@ class TrackerConfig:
     max_initial_step_size: float = 0.05
     min_step_size: float = 1e-12
     extended_precision: bool = False
+    a: float = 0.125
+    beta_a: float = 1.0
+    beta_omega_p: float = 3.0
+    beta_tau: float = 0.4
+    strict_beta_tau: float | None = None
+    min_newton_iters: int = 2
+    predictor_order: int = 1
 
     def __post_init__(self) -> None:
         max_steps = _require_positive_int("max_steps", self.max_steps)
@@ -69,7 +95,29 @@ class TrackerConfig:
             raise ValueError("min_step_size must be <= max_initial_step_size.")
         if not isinstance(self.extended_precision, bool):
             raise TypeError("extended_precision must be a bool.")
+        a = _require_open_unit_float("a", self.a, upper_inclusive=False)
+        beta_a = _require_positive_finite_float("beta_a", self.beta_a)
+        beta_omega_p = _require_positive_finite_float("beta_omega_p", self.beta_omega_p)
+        beta_tau = _require_open_unit_float("beta_tau", self.beta_tau, upper_inclusive=True)
+        strict_beta_tau = (
+            None
+            if self.strict_beta_tau is None
+            else _require_open_unit_float("strict_beta_tau", self.strict_beta_tau, upper_inclusive=True)
+        )
+        min_newton_iters = _require_positive_int("min_newton_iters", self.min_newton_iters)
+        predictor_order = _require_positive_int("predictor_order", self.predictor_order)
+        if predictor_order not in SUPPORTED_PREDICTOR_ORDERS:
+            raise ValueError(
+                f"predictor_order must be one of {SUPPORTED_PREDICTOR_ORDERS}, got {predictor_order}."
+            )
 
+        object.__setattr__(self, "a", a)
+        object.__setattr__(self, "beta_a", beta_a)
+        object.__setattr__(self, "beta_omega_p", beta_omega_p)
+        object.__setattr__(self, "beta_tau", beta_tau)
+        object.__setattr__(self, "strict_beta_tau", strict_beta_tau)
+        object.__setattr__(self, "min_newton_iters", min_newton_iters)
+        object.__setattr__(self, "predictor_order", predictor_order)
         object.__setattr__(self, "max_steps", max_steps)
         object.__setattr__(self, "max_step_size", max_step_size)
         object.__setattr__(self, "max_initial_step_size", max_initial_step_size)

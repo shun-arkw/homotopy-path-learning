@@ -14,6 +14,27 @@ def test_tracker_config_defaults_are_valid() -> None:
     assert config.max_initial_step_size == 0.05
     assert config.min_step_size == 1e-12
     assert config.extended_precision is False
+    assert (config.a, config.beta_a, config.beta_omega_p, config.beta_tau) == (0.125, 1.0, 3.0, 0.4)
+    assert config.strict_beta_tau is None
+    assert config.min_newton_iters == 2
+    assert config.predictor_order == 1
+
+
+def test_tracker_config_accepts_tracker_parameters_and_predictor_order() -> None:
+    config = TrackerConfig(
+        a=0.2,
+        beta_a=1.5,
+        beta_omega_p=0.8,
+        beta_tau=0.85,
+        strict_beta_tau=0.8,
+        min_newton_iters=1,
+        predictor_order=3,
+    )
+
+    assert (config.a, config.beta_a, config.beta_omega_p, config.beta_tau) == (0.2, 1.5, 0.8, 0.85)
+    assert config.strict_beta_tau == 0.8
+    assert config.min_newton_iters == 1
+    assert config.predictor_order == 3
 
 
 @pytest.mark.parametrize(
@@ -31,6 +52,15 @@ def test_tracker_config_defaults_are_valid() -> None:
             "min_step_size",
         ),
         ({"extended_precision": np.bool_(False)}, TypeError, "extended_precision"),
+        ({"a": 0.0}, ValueError, "a must be positive"),
+        ({"a": 1.0}, ValueError, "a must be < 1"),
+        ({"beta_a": float("inf")}, ValueError, "beta_a"),
+        ({"beta_omega_p": -1.0}, ValueError, "beta_omega_p"),
+        ({"beta_tau": 1.5}, ValueError, "beta_tau"),
+        ({"strict_beta_tau": 0.0}, ValueError, "strict_beta_tau"),
+        ({"min_newton_iters": 0}, ValueError, "min_newton_iters"),
+        ({"predictor_order": 2}, ValueError, "predictor_order"),
+        ({"predictor_order": 3.0}, TypeError, "predictor_order"),
     ],
 )
 def test_tracker_config_rejects_invalid_values(

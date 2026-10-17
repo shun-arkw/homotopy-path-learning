@@ -35,6 +35,7 @@ mutable struct BezierPhamHomotopy <: AbstractHomotopy
     spec::PolynomialSystemSpec
     bezier_degree::Int
     control_points::Matrix{ComplexF64}
+    max_derivative_order::Int
     coefficient_differences::Vector{Matrix{ComplexF64}}
     coefficient_buffers::Vector{Vector{ComplexF64}}
     monomial_buffer::Vector{ComplexF64}
@@ -98,17 +99,31 @@ $$
 
 ## 8．$t$方向Taylor係数
 
-ベジェ制御点の有限差分を用いて，係数曲線の高階微分を評価する．$\tau=1-t$であるため，$t$に関する$k$階微分には$(-1)^k$が付く．
+`ModelKit.taylor!(out, Val(k), H, tx, t)`は，HomotopyContinuation.jlの予測子が求めるとおり，
 
 $$
-\frac{\partial^k H_i}{\partial t^k}
-=
-(-1)^k
-\sum_q c_q^{(k)}(\tau)
-\boldsymbol{x}^{\boldsymbol{\alpha}_q}
+H\bigl(\boldsymbol{x}(t+\lambda),\,t+\lambda\bigr)
 $$
 
-既存一変数実装の`compute_diffs!`，Bernstein重み，階乗係数の処理を一般の係数数$M$へ拡張する．
+を$\lambda$で展開したときの$\lambda^k$の係数を返す．$\boldsymbol{x}(t+\lambda)=\sum_{j<k}\boldsymbol{x}_j\lambda^j$は`tx`で与えられる（$k$次以上の項は使わない）．
+
+ベジェ制御点の有限差分を用いて，係数曲線の高階微分$c_q^{(j)}(\tau)$を評価する．$\tau=1-t$であるため，係数の$\lambda^j$の係数は
+
+$$
+\frac{(-1)^j}{j!}\,c_q^{(j)}(\tau)
+$$
+
+である（$j>d_b$では0）．各単項式$\boldsymbol{x}^{\boldsymbol{\alpha}_q}$は，$\boldsymbol{x}$の打ち切った級数の積として$k$次まで計算し，係数の級数との積の$\lambda^k$の係数を足し合わせる．$k=1$では$\boldsymbol{x}$の定数項だけが効き，
+
+$$
+-\sum_q c_q'(\tau)\,\boldsymbol{x}^{\boldsymbol{\alpha}_q}
+$$
+
+となる．
+
+- `BezierPhamHomotopy`の`max_derivative_order`（0〜4）より高い次数では0を返す．係数の差分は$\min(\texttt{max\_derivative\_order},d_b)$次まで前計算する．
+- 正しさは，同じホモトピーをModelKitの記号計算で作った参照との一致でテストする（`julia/test/test_taylor.jl`）．
+- 2026-10-17より前の実装は，2次以上で$\boldsymbol{x}$の展開の項を使わず，$1/j!$も付けていなかった．追跡では2次以上を使わない設定（10.1節の次数1）だけを使っていたので，それまでの実験結果には影響しない．
 
 ## 9．開始解
 
@@ -144,6 +159,15 @@ $$
 - 終点近似解
 - 目的系に対する残差ノルム
 - 失敗理由
+
+### 10.1．予測子に渡す次数と追跡のパラメータ
+
+- `track_all_paths(H, starts; tracker_options, predictor_order = 1)`は，`predictor_order`次までのTaylor係数を返す追跡用のホモトピーで追跡する．
+  - `predictor_order = 1`（既定．EXP-0052までのすべての実験）：2次以上は0なので，HomotopyContinuation.jlの(2,1)型Padé予測子は実質的にオイラー法になり，予測が信頼できる範囲$\tau$は特異点までの距離を表さない．
+  - `predictor_order = 3`：Padé予測子が必要とする3次までのTaylor係数を渡す（EXP-0054）．
+- `make_tracker_options`は，ステップ幅の上限などに加えて，HomotopyContinuation.jlの`TrackerParameters`（`a`，`β_a`，`β_ω_p`，`β_τ`，`strict_β_τ`，`min_newton_iters`）を受け取る（EXP-0053）．省略時は`DEFAULT_TRACKER_PARAMETERS`と同じ値である．
+- Python側では，設定ファイルの`tracker`の省略可能な項目`a`，`beta_a`，`beta_omega_p`，`beta_tau`，`strict_beta_tau`，`min_newton_iters`，`predictor_order`から渡す．省略した設定ファイルは，それまでとまったく同じ追跡になる．
+- パラメータの意味とステップ幅の決め方は，`docs/reports/2026-10-17-step-size-settings.md`にまとめた．
 
 ## 11．API境界
 
