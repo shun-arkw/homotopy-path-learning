@@ -659,3 +659,13 @@ EXP-0050の判断に従い，報告の残りの5つの系の種類にも$d_b=3$�
 実験記録:  docs/experiments/EXP-0054-higher-order-predictor/
 生成物:    outputs/EXP-0054/（実行スクリプトはoutputs/EXP-0054/scripts/）
 ```
+
+### EXP-0055：安全係数`β_ω_p`=0.8・上限なしの追跡で，$d_b=3$の標準の手順をやり直す（8つの系の種類）
+
+EXP-0053で選んだ追跡の設定（`β_ω_p`=0.8，`max_step_size`=1.0）で，教師データ・教師あり学習・微調整をやり直す．先に，既存の教師データの係数パスと探索で，解の取りこぼしがないことを学習データの目的系で確かめる．開発集合で今の標準（今の追跡の設定）の削減率と比べて系の種類ごとに判断し，テストデータで1回だけ確かめる．各段階の時間も記録する．メインの環境で実行する（n5-d33333の教師データの一部は外部サーバで作ってよい）．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0055-*-db3-bw08.yaml（8つ）
+実験記録:  docs/experiments/EXP-0055-pipeline-beta-omega-0.8/
+生成物:    outputs/EXP-0055/<run-id>/（実行スクリプトはoutputs/EXP-0055/scripts/）
+```
