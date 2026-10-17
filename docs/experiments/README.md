@@ -619,3 +619,23 @@ EXP-0047（n4-d3333）と同じ$d_b=3$の標準の手順（予算500）を，n5-
 実験記録:  docs/experiments/EXP-0050-db3-pipeline-n5/
 生成物:    outputs/EXP-0050/<run-id>/と外部サーバのoutputs/EXP-0050/（実行スクリプトは各outputs/EXP-0050/scripts/）
 ```
+
+### EXP-0051：ベジェ次数$d_b=3$の標準の手順（残りの系の種類：n2-d22，n2-d33，n3-d222，n3-d333，n4-d2222）
+
+EXP-0050の判断に従い，報告の残りの5つの系の種類にも$d_b=3$を広げる．n2-d22，n3-d222，n4-d2222では$d_b=3$の標準の手順を新たに行い，n2-d33とn3-d333は既存の$d_b=3$のネットワーク（EXP-0026，EXP-0021）を使う．判断は新たに予約する開発集合，報告用の値はテストデータで1回だけ求める．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0051-n2-d22-db3.yaml，exp-0007-n3-d222-seed0.yaml，exp-0014-n4-d2222.yaml
+実験記録:  docs/experiments/EXP-0051-db3-pipeline-remaining/
+生成物:    outputs/EXP-0051/<run-id>/（実行スクリプトはoutputs/EXP-0051/scripts/）
+```
+
+### EXP-0052：追跡の最大ステップ幅を緩めたときの削減率（学習し直さない評価）
+
+報告の8つの系の種類（$d_b=2$）と$d_b=3$の3つの微調整後のネットワークを，学習し直さずに，追跡の`max_step_size`を0.05から0.1，0.2，0.5，1.0に緩めてテストデータで評価し，線形パスとベジェ曲線のパスのステップ数，削減率，取りこぼした解の数を調べる．メインの環境で実行する．
+
+```text
+実行設定:  各runのconfig.yaml（tracker.max_step_sizeだけをスクリプトで差し替える）
+実験記録:  docs/experiments/EXP-0052-max-step-size-test/
+生成物:    outputs/EXP-0052/（実行スクリプトはoutputs/EXP-0052/scripts/）
+```
