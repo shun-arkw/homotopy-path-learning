@@ -639,3 +639,23 @@ EXP-0050の判断に従い，報告の残りの5つの系の種類にも$d_b=3$�
 実験記録:  docs/experiments/EXP-0052-max-step-size-test/
 生成物:    outputs/EXP-0052/（実行スクリプトはoutputs/EXP-0052/scripts/）
 ```
+
+### EXP-0053：追跡のステップ幅のパラメータ（`TrackerParameters`）を変えたときのステップ数（学習し直さない評価）
+
+報告（2026-10-17）で，n4以上ではステップ幅がほぼ`β_ω_p`と`a`の入った項で決まっていたことを受け，学習し直さずに，HC.jlの`TrackerParameters`と`max_step_size`を変えて，8つの系の種類（$d_b=3$の微調整後）のステップ数，削減率，追跡の失敗，解の取りこぼし，時間を調べる．安全な設定の中から開発集合で選び，テストデータで1回だけ確かめる．`TrackerParameters`を渡せるようにするコードの変更を伴う．メインの環境で実行する．
+
+```text
+実行設定:  各runのconfig.yaml（trackerだけをスクリプトで差し替える）
+実験記録:  docs/experiments/EXP-0053-tracker-parameters/
+生成物:    outputs/EXP-0053/（実行スクリプトはoutputs/EXP-0053/scripts/）
+```
+
+### EXP-0054：予測子に高次の微分を渡したときのステップ数（学習し直さない評価）
+
+追跡用のホモトピーのテイラー係数を3次まで正しく計算して，HC.jlのPadé予測子を本来どおり働かせ，学習し直さずに，ステップ数，削減率，追跡の失敗，解の取りこぼし，時間を調べる．EXP-0053と同じ方法で，安全な設定の中から開発集合で選び，テストデータで1回だけ確かめる．`ModelKit.taylor!`の修正と追跡の設定の追加を伴う．メインの環境で実行する．
+
+```text
+実行設定:  各runのconfig.yaml（trackerだけをスクリプトで差し替える）
+実験記録:  docs/experiments/EXP-0054-higher-order-predictor/
+生成物:    outputs/EXP-0054/（実行スクリプトはoutputs/EXP-0054/scripts/）
+```
