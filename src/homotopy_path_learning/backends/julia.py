@@ -450,8 +450,21 @@ def _snapshot_to_python(snapshot: Any) -> dict[str, Any]:
     }
 
 
+# The Julia API keeps one process-global Bezier Pham state. Several Python backends in one process (for example, two
+# environments with different tracker settings) therefore share it: before 2026-10-17 the state of the backend
+# initialized last silently served every backend. ``_ACTIVE_BACKEND`` records which backend's state is loaded; a backend
+# whose state is not loaded re-initializes it before tracking.
+_ACTIVE_BACKEND: "JuliaTrackerBackend | None" = None
+
+
 class JuliaTrackerBackend:
-    """Tracker backend backed by the Phase 3 Julia public API."""
+    """Tracker backend backed by the Phase 3 Julia public API.
+
+    Several instances may coexist in one process: each instance re-loads its own system, Bezier degree and tracker
+    settings into the process-global Julia state before ``track``, ``warmup`` and ``state_snapshot`` when another
+    instance's state is loaded (control points of the other instance are then not kept). ``close`` clears the Julia
+    state only when this instance's state is the loaded one.
+    """
 
     def __init__(
         self,
@@ -464,6 +477,7 @@ class JuliaTrackerBackend:
         self._runtime: _JuliaRuntime | None = None
         self._system_spec: PolynomialSystemSpec | None = None
         self._bezier_degree: int | None = None
+        self._tracker_config: TrackerConfig | None = None
         self._initialized = False
         self._closed = False
 
@@ -493,6 +507,7 @@ class JuliaTrackerBackend:
     ) -> None:
         """Initialize and cache the Julia Pham homotopy state."""
 
+        global _ACTIVE_BACKEND
         if self._closed:
             raise BackendClosedError("cannot initialize a closed JuliaTrackerBackend.")
         if not isinstance(tracker_config, TrackerConfig):
@@ -524,12 +539,16 @@ class JuliaTrackerBackend:
             )
         except Exception as exc:
             self._initialized = False
+            if _ACTIVE_BACKEND is self:
+                _ACTIVE_BACKEND = None
             raise JuliaAPIError("failed to initialize Julia Bezier Pham backend state.") from exc
 
         self._runtime = runtime
         self._system_spec = system_spec
         self._bezier_degree = degree
+        self._tracker_config = tracker_config
         self._initialized = True
+        _ACTIVE_BACKEND = self
 
     def warmup(self) -> TrackingResult:
         """Run Julia ``warmup!`` after initialization."""
@@ -561,13 +580,15 @@ class JuliaTrackerBackend:
         return tracking_result_from_julia(payload, n_vars=spec.n_vars)
 
     def close(self) -> None:
-        """Clear Julia state. Multiple calls are safe."""
+        """Clear Julia state (only if this instance's state is loaded). Multiple calls are safe."""
 
+        global _ACTIVE_BACKEND
         if self._closed:
             return
         runtime = self._runtime
         try:
-            if runtime is not None:
+            if runtime is not None and _ACTIVE_BACKEND is self:
+                _ACTIVE_BACKEND = None
                 runtime.clear_state()
         except Exception as exc:
             raise JuliaAPIError("failed to clear Julia backend state.") from exc
@@ -575,6 +596,7 @@ class JuliaTrackerBackend:
             self._initialized = False
             self._system_spec = None
             self._bezier_degree = None
+            self._tracker_config = None
             self._closed = True
 
     def julia_state_initialized(self) -> bool:
@@ -603,6 +625,10 @@ class JuliaTrackerBackend:
             raise BackendClosedError("JuliaTrackerBackend has been closed.")
         if not self._initialized or self._runtime is None:
             raise BackendStateError("JuliaTrackerBackend is not initialized.")
+        if _ACTIVE_BACKEND is not self:
+            # Another backend in this process loaded its own state; restore ours.
+            assert self._system_spec is not None and self._bezier_degree is not None and self._tracker_config is not None
+            self.initialize(self._system_spec, self._bezier_degree, self._tracker_config)
         return self._runtime
 
     def _require_system_spec(self) -> PolynomialSystemSpec:

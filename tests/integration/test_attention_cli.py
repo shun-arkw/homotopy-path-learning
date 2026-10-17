@@ -149,3 +149,31 @@ def test_attention_zero_epoch_bc_then_finetune(tmp_path) -> None:
     ft = root / "EXP-TEST" / "ft0"
     assert load_checkpoint(ft / "checkpoints" / "last.pt")["actor_type"] == "attention"
     assert len(read_csv_rows(ft / "val_metrics.csv")) == 3
+
+
+def test_finetune_from_a_run_with_other_tracker_settings_needs_the_flag(tmp_path) -> None:
+    import yaml
+
+    root = tmp_path / "outputs"
+    labels = oracle(root, "labels", "--evaluation-seed", "900000", "--num-instances", "4")
+    run_cli(
+        "behavior_cloning.py", "--config", CONFIG, "--label-run-dir", str(labels), "--latent-dim", "full",
+        "--actor-type", "attention", *SMALL, "--epochs", "1", "--val-fraction", "0.25", "--num-instances", "1",
+        "--experiment-id", "EXP-TEST", "--run-id", "bc", "--output-root", str(root), "--allow-dirty",
+    )
+    data = yaml.safe_load(Path(CONFIG).read_text(encoding="utf-8"))
+    data["tracker"].update({"beta_omega_p": 0.8, "max_step_size": 1.0})
+    other = tmp_path / "other-tracker.yaml"
+    other.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    common = [
+        "finetune.py", "--config", str(other), "--latent-dim", "full", "--init-run-dir", str(root / "EXP-TEST" / "bc"),
+        "--iterations", "1", "--batch-problems", "2", "--pairs", "1", "--val-instances", "2", "--val-interval", "1",
+        "--num-instances", "1", "--experiment-id", "EXP-TEST", "--output-root", str(root), "--allow-dirty",
+    ]
+    with pytest.raises(subprocess.CalledProcessError):
+        run_cli(*common[:1], *common[1:], "--run-id", "ft-refused")
+    run_cli(*common[:1], *common[1:], "--run-id", "ft", "--allow-init-tracker-difference")
+    ft = root / "EXP-TEST" / "ft"
+    assert len(read_csv_rows(ft / "val_metrics.csv")) == 2
+    saved = yaml.safe_load((ft / "config.yaml").read_text(encoding="utf-8"))
+    assert saved["tracker"]["beta_omega_p"] == 0.8

@@ -71,10 +71,10 @@ def _attention_settings(checkpoint: dict) -> dict:
     return {names[key]: int(value) for key, value in kwargs.items() if key in names}
 
 
-def _require_compatible(base, directory: Path) -> None:
+def _require_compatible(base, directory: Path, *, ignore: tuple[str, ...] = ()) -> None:
     key = _compatibility_key(load_config(directory / "config.yaml"))
     for name, value in _compatibility_key(base).items():
-        if key[name] != value:
+        if name not in ignore and key[name] != value:
             raise ValueError(f"run {directory} differs from the base config in {name}.")
 
 
@@ -145,6 +145,12 @@ def main() -> None:
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument(
+        "--allow-init-tracker-difference",
+        action="store_true",
+        help="Allow --init-run-dir to have been trained with other tracker settings (only the network is taken from it; "
+        "fine-tuning tracks with --config's tracker). Label runs must still match --config.",
+    )
     args = parser.parse_args()
 
     if args.bc_weight > 0 and not args.label_run_dir:
@@ -186,7 +192,7 @@ def main() -> None:
     base = load_config(args.config)
     base = with_latent_dim(base, resolve_latent_dim(base, args.latent_dim))
     init_dir = Path(args.init_run_dir)
-    _require_compatible(base, init_dir)
+    _require_compatible(base, init_dir, ignore=("tracker",) if args.allow_init_tracker_difference else ())
     checkpoint = load_checkpoint(init_dir / "checkpoints" / "last.pt", map_location=args.device)
     ppo_ckpt = checkpoint["ppo_config"]
     config = replace(

@@ -255,3 +255,47 @@ def test_tracker_parameters_and_predictor_order_reach_julia() -> None:
         expected = np.lexsort((reference.endpoints.imag[:, 0], reference.endpoints.real[:, 0]))
         np.testing.assert_allclose(result.endpoints[order], reference.endpoints[expected], atol=1e-8)
     assert aggressive.accepted_steps < reference.accepted_steps
+
+
+def test_backends_in_one_process_keep_their_own_tracker_settings() -> None:
+    spec = make_spec()
+    control_points = linear_control_points()
+    aggressive_config = TrackerConfig(beta_omega_p=0.8, max_step_size=1.0)
+
+    with JuliaTrackerBackend() as alone:
+        alone.initialize(spec, 3, TrackerConfig())
+        expected_default = alone.track(control_points)
+    with JuliaTrackerBackend() as alone:
+        alone.initialize(spec, 3, aggressive_config)
+        expected_aggressive = alone.track(control_points)
+    assert expected_aggressive.accepted_steps != expected_default.accepted_steps
+
+    default = JuliaTrackerBackend()
+    aggressive = JuliaTrackerBackend()
+    try:
+        default.initialize(spec, 3, TrackerConfig())
+        aggressive.initialize(spec, 3, aggressive_config)  # loaded last
+        assert_same_tracking_result(default.track(control_points), expected_default)
+        assert_same_tracking_result(aggressive.track(control_points), expected_aggressive)
+        assert_same_tracking_result(default.track(control_points), expected_default)
+        assert default.state_snapshot()["nvars"] == 2
+    finally:
+        default.close()
+        aggressive.close()
+
+
+def test_closing_a_backend_whose_state_is_not_loaded_keeps_the_loaded_state() -> None:
+    spec = make_spec()
+    first = JuliaTrackerBackend()
+    second = JuliaTrackerBackend()
+    try:
+        first.initialize(spec, 3, TrackerConfig())
+        second.initialize(spec, 3, TrackerConfig(max_steps=60_000))
+        first.close()
+        assert second.julia_state_initialized()
+        assert second.track(linear_control_points()).success
+        second.close()
+        assert not second.julia_state_initialized()
+    finally:
+        first.close()
+        second.close()
