@@ -709,3 +709,13 @@ EXP-0057と同じネットワーク（10の系の種類）を学習し直さず�
 実験記録:  docs/experiments/EXP-0059-random-action-subspace/
 生成物:    outputs/EXP-0059/<run-id>/（実行スクリプトはoutputs/EXP-0059/scripts/）
 ```
+
+### EXP-0060：目的系をランダムな部分空間の族に限ったとき，探索（oracle）は線形パスに対してどれだけ改善するか（n4-d3333，n5-d33333）
+
+ADR-0008の部分空間の族（目的系の自由な係数を$W\boldsymbol{u}$，$W$はランダムな複素行列）で，$k\in\{4,8,12,16\}$（$W$ 3つ）と一般（ガウス，$k=m$）について，開発集合（n4-d3333は500個，n5-d33333は200個）の目的系ごとに探索（予算1000）を行い，線形パスに対する改善量を，族の基底と全次元の行動で比べる．学習は行わない（次の実験で扱う）．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0060-*.yaml（50個）
+実験記録:  docs/experiments/EXP-0060-subspace-family-oracle/
+生成物:    outputs/EXP-0060/<run-id>/（実行スクリプトはoutputs/EXP-0060/scripts/run_oracle.sh）
+```
