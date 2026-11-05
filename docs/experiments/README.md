@@ -699,3 +699,13 @@ EXP-0057と同じネットワーク（10の系の種類）を学習し直さず�
 実験記録:  docs/experiments/EXP-0058-newton-a-safety/
 生成物:    outputs/EXP-0058/（実行スクリプトはoutputs/EXP-0058/scripts/）
 ```
+
+### EXP-0059：目的系は一般のまま，行動をランダムな小さい部分空間に絞ったとき，係数パスの探索はどれだけ速く，どれだけ良くなるか
+
+目的系の係数を部分空間に限る案（目的系も行動も$\boldsymbol{c}=W\boldsymbol{u}$に限る）の前に，目的系は今の一般の分布のまま，行動だけをランダムな部分空間（潜在次元4，8，16と全次元，基底のseed 3つ）に絞り，探索（oracle，予算1000）が見つける改善量と，今の教師データ（全次元，予算500）と同じ質に届く予算を，n4-d3333とn6-d222222（$d_b=3$，新しい追跡の設定，各100個の目的系）で調べる．学習はしない．メインの環境で実行する．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0059-*.yaml（6つ．潜在次元はoracle.pyの--latent-dimで指定）
+実験記録:  docs/experiments/EXP-0059-random-action-subspace/
+生成物:    outputs/EXP-0059/<run-id>/（実行スクリプトはoutputs/EXP-0059/scripts/）
+```
