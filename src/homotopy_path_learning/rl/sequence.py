@@ -17,7 +17,7 @@ import numpy.typing as npt
 import torch
 from torch import nn
 
-from homotopy_path_learning.rl.attention import _AttentionSublayer
+from homotopy_path_learning.rl.attention import _AttentionSublayer, latent_basis_array
 from homotopy_path_learning.systems.spec import PolynomialSystemSpec
 
 
@@ -44,15 +44,16 @@ class SequenceActor(nn.Module):
 
     Args:
         spec: system support (any support is accepted).
-        basis: latent basis ``U``, array of shape ``(2 D_free, 2 D_free)``
-            (square; ``ValueError`` otherwise). Stored as a float32 buffer
-            ``basis`` and therefore part of the state dict.
+        basis: latent basis ``U``, array of shape ``(2 D_free, latent_dim)`` with
+            orthonormal columns (``latent_dim = 2 D_free`` is the full latent space;
+            ``ValueError`` otherwise, see ``attention.latent_basis_array``). Stored as a
+            float32 buffer ``basis`` and therefore part of the state dict.
         bezier_degree: ``d_b >= 2``; the action has ``d_b - 1`` blocks.
         d_model, n_heads, n_layers, ff_dim: model size (default 128, 4, 4, 256).
 
     ``forward(obs)`` takes ``obs`` of shape ``(batch, 2 D_free)`` laid out as
     ``[Re c_free, Im c_free]`` (``np.flatnonzero(spec.free_coefficient_mask)``
-    order) and returns ``(batch, (d_b - 1) * 2 D_free)`` (the model dtype,
+    order) and returns ``(batch, (d_b - 1) * latent_dim)`` (the model dtype,
     float32 by default): the concatenation over ``k`` of ``u_k = U^T delta_k``.
     """
 
@@ -70,12 +71,7 @@ class SequenceActor(nn.Module):
         super().__init__()
         free_dim = int(np.count_nonzero(spec.free_coefficient_mask))
         real_dim = 2 * free_dim
-        basis_array = np.asarray(basis, dtype=np.float64)
-        if basis_array.shape != (real_dim, real_dim):
-            raise ValueError(
-                f"basis must be square with shape ({real_dim}, {real_dim}) (full latent space); "
-                f"got {basis_array.shape}."
-            )
+        basis_array = latent_basis_array(basis, real_dim)
         if isinstance(bezier_degree, bool) or int(bezier_degree) < 2:
             raise ValueError(f"bezier_degree must be an integer >= 2, got {bezier_degree!r}.")
         if min(d_model, n_heads, n_layers, ff_dim) <= 0 or d_model % n_heads != 0:
@@ -83,7 +79,8 @@ class SequenceActor(nn.Module):
         self.free_dim = free_dim
         self.real_dim = real_dim
         self.n_blocks = int(bezier_degree) - 1
-        self.action_dim = self.n_blocks * real_dim
+        self.latent_dim = int(basis_array.shape[1])
+        self.action_dim = self.n_blocks * self.latent_dim
         self.register_buffer("basis", torch.as_tensor(basis_array, dtype=torch.float32))
 
         self.embed = nn.Linear(2, d_model)
@@ -118,7 +115,7 @@ class SequenceActor(nn.Module):
         return delta.transpose(1, 2)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        """Return the pre-tanh action mean, shape ``(batch, (d_b - 1) * 2 D_free)``."""
+        """Return the pre-tanh action mean, shape ``(batch, (d_b - 1) * latent_dim)``."""
 
         delta = self.coefficient_delta(obs)
         u = delta @ self.basis.to(delta.dtype)  # row form of u_k = U^T delta_k

@@ -157,6 +157,24 @@ def make_orthonormal_basis(
     return (q * signs).astype(np.float64, copy=False)
 
 
+def realify_complex_basis(basis: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Return the real form ``[[Re W, -Im W], [Im W, Re W]]`` of a complex basis ``W``.
+
+    ``W`` has shape ``(D_free, k)``; the result has shape ``(2 D_free, 2 k)`` and dtype
+    ``float64``. For a real latent vector ``z = [Re z_c, Im z_c]`` it maps ``z`` to
+    ``[Re(W z_c), Im(W z_c)]``, the real free-coefficient layout used by
+    :class:`BezierParameterization`. If ``W`` has orthonormal columns (``W^H W = I``), so does
+    the result.
+    """
+
+    w = np.asarray(basis, dtype=np.complex128)
+    if w.ndim != 2:
+        raise ValueError(f"basis must be two-dimensional, got shape {w.shape}.")
+    if not np.all(np.isfinite(w.real)) or not np.all(np.isfinite(w.imag)):
+        raise ValueError("basis must not contain NaN or Inf.")
+    return np.block([[w.real, -w.imag], [w.imag, w.real]]).astype(np.float64, copy=False)
+
+
 def linear_interpolation_control_points(
     start_coeffs: npt.ArrayLike,
     target_coeffs: npt.ArrayLike,
@@ -353,6 +371,28 @@ class BezierParameterization:
             leading_indices=spec.leading_indices.copy(),
         )
 
+    @classmethod
+    def from_basis(
+        cls,
+        spec: PolynomialSystemSpec,
+        *,
+        bezier_degree: int,
+        basis: npt.ArrayLike,
+    ) -> "BezierParameterization":
+        """Create a parameterization with a given latent basis ``U`` of shape ``(2 D_free, m)``.
+
+        ``basis`` is copied and must satisfy the same checks as the dataclass fields (float64,
+        orthonormal columns, ``2 D_free`` rows in free-coefficient order).
+        """
+
+        free_indices = np.flatnonzero(spec.free_coefficient_mask).astype(np.int64)
+        return cls(
+            bezier_degree=bezier_degree,
+            basis=np.array(basis, dtype=np.float64, copy=True),
+            free_indices=free_indices,
+            leading_indices=spec.leading_indices.copy(),
+        )
+
     @property
     def latent_dim(self) -> int:
         """Latent dimension ``m``."""
@@ -427,5 +467,6 @@ __all__ = [
     "nonleading_coefficient_mask",
     "real_to_complex_coefficients",
     "real_to_complex_coeffs",
+    "realify_complex_basis",
     "validate_control_points",
 ]

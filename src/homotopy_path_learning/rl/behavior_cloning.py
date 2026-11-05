@@ -85,6 +85,8 @@ def train_behavior_cloning(
     device: str | torch.device = "cpu",
     augmentations: Sequence[tuple[ArrayLike, ArrayLike]] | None = None,
     label_reduction: str = "mean",
+    validation_observations: ArrayLike | None = None,
+    validation_actions: ArrayLike | None = None,
 ) -> tuple[BehaviorCloningResult, torch.optim.Optimizer]:
     """Fit ``agent.actor_mean`` to oracle actions with an MSE loss.
 
@@ -111,6 +113,12 @@ def train_behavior_cloning(
     target are on the same side. Validation and the reported full train loss use
     the original data and the same ``label_reduction``.
 
+    ``validation_observations`` / ``validation_actions`` (both or neither) give an explicit
+    validation set with the same shapes and checks as the training data (same ``K``). Then all of
+    ``observations`` are used for training, ``val_fraction`` is ignored and no split permutation is
+    drawn (minibatch shuffling is unchanged). This keeps one fixed validation set across training
+    sets of different sizes.
+
     ``epochs`` must be an integer ``>= 0``. ``epochs=0`` performs no training:
     the agent keeps exactly its initial weights, ``history`` is empty,
     ``best_epoch`` is 0 and ``best_val_loss`` is the validation loss of the
@@ -120,8 +128,6 @@ def train_behavior_cloning(
     _non_negative_int("epochs", epochs)
     _positive("batch_size", batch_size, int)
     _positive("learning_rate", learning_rate, float)
-    if not 0.0 < float(val_fraction) < 1.0:
-        raise ValueError(f"val_fraction must lie in (0, 1), got {val_fraction!r}.")
     obs = np.array(observations, dtype=np.float32, copy=True)
     act = np.array(actions, dtype=np.float32, copy=True)
     if label_reduction not in ("mean", "min"):
@@ -155,11 +161,34 @@ def train_behavior_cloning(
     high = agent.distribution.high.detach().cpu().numpy()
     if np.any(act < low - 1.0e-6) or np.any(act > high + 1.0e-6):
         raise ValueError("action labels lie outside the action bounds of the agent.")
-    n_val = int(round(n * float(val_fraction)))
-    n_val = min(max(n_val, 1), n - 1)
-    n_train = n - n_val
-    if n_val < 1 or n_train < 1:
-        raise ValueError("val_fraction leaves an empty train or validation split.")
+    explicit_val = validation_observations is not None or validation_actions is not None
+    if explicit_val:
+        if validation_observations is None or validation_actions is None:
+            raise ValueError("validation_observations and validation_actions must be given together.")
+        v_obs = np.array(validation_observations, dtype=np.float32, copy=True)
+        v_act = np.array(validation_actions, dtype=np.float32, copy=True)
+        if v_act.ndim == 2:
+            v_act = v_act[:, None, :]
+        if v_obs.ndim != 2 or v_act.ndim != 3 or v_obs.shape[0] != v_act.shape[0] or v_obs.shape[0] < 1:
+            raise ValueError(f"validation set has invalid shapes {v_obs.shape} and {v_act.shape}.")
+        if v_obs.shape[1] != obs_dim or v_act.shape[1:] != act.shape[1:]:
+            raise ValueError(
+                f"validation set must have shapes (V, {obs_dim}) and (V, {act.shape[1]}, {action_dim}), "
+                f"got {v_obs.shape} and {v_act.shape}."
+            )
+        if not (np.all(np.isfinite(v_obs)) and np.all(np.isfinite(v_act))):
+            raise ValueError("validation observations and actions must be finite.")
+        if np.any(v_act < low - 1.0e-6) or np.any(v_act > high + 1.0e-6):
+            raise ValueError("validation action labels lie outside the action bounds of the agent.")
+        n_val, n_train = int(v_obs.shape[0]), n
+    else:
+        if not 0.0 < float(val_fraction) < 1.0:
+            raise ValueError(f"val_fraction must lie in (0, 1), got {val_fraction!r}.")
+        n_val = int(round(n * float(val_fraction)))
+        n_val = min(max(n_val, 1), n - 1)
+        n_train = n - n_val
+        if n_val < 1 or n_train < 1:
+            raise ValueError("val_fraction leaves an empty train or validation split.")
 
     aug_obs = aug_act = None
     if augmentations is not None:
@@ -182,12 +211,16 @@ def train_behavior_cloning(
     n_clipped = 0
     n_entries = 0
 
-    order = np.random.default_rng(seed).permutation(n)
-    train_idx, val_idx = order[:n_train], order[n_train:]
     obs_t = torch.as_tensor(obs, device=device)
     act_t = torch.as_tensor(act, device=device)
-    train_obs, train_act = obs_t[train_idx], act_t[train_idx]
-    val_obs, val_act = obs_t[val_idx], act_t[val_idx]
+    if explicit_val:
+        train_obs, train_act = obs_t, act_t
+        val_obs, val_act = torch.as_tensor(v_obs, device=device), torch.as_tensor(v_act, device=device)
+    else:
+        order = np.random.default_rng(seed).permutation(n)
+        train_idx, val_idx = order[:n_train], order[n_train:]
+        train_obs, train_act = obs_t[train_idx], act_t[train_idx]
+        val_obs, val_act = obs_t[val_idx], act_t[val_idx]
 
     optimizer = torch.optim.Adam(agent.actor_mean.parameters(), lr=float(learning_rate))
     generator = torch.Generator().manual_seed(int(seed))

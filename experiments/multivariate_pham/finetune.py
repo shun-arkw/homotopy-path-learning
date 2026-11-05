@@ -14,7 +14,13 @@ preload_julia()
 import numpy as np
 import torch
 
-from homotopy_path_learning.config import build_env, build_system_spec, load_config, save_config
+from homotopy_path_learning.config import (
+    build_env,
+    build_system_spec,
+    load_config,
+    require_symmetry_augmentation_allowed,
+    save_config,
+)
 from homotopy_path_learning.evaluation.evaluator import evaluate_checkpoint
 from homotopy_path_learning.evaluation.metrics import read_rows, write_rows
 from homotopy_path_learning.evaluation.oracle import (
@@ -56,11 +62,14 @@ def _compatibility_key(config) -> dict:
         "path.bezier_degree": config.path.bezier_degree,
         "path.latent_dim": config.path.latent_dim,
         "path.basis_seed": config.path.basis_seed,
+        "path.basis": config.path.basis,
         "path.action_limit": config.path.action_limit,
         "system.degrees": config.system.degrees,
         "system.free_exponents": config.system.free_exponents,
         "sampler.type": config.sampler.type,
         "sampler.bound": config.sampler.bound,
+        "sampler.subspace_dim": config.sampler.subspace_dim,
+        "sampler.family_seed": config.sampler.family_seed,
         "tracker": config.tracker,
     }
 
@@ -79,20 +88,28 @@ def _require_compatible(base, directory: Path, *, ignore: tuple[str, ...] = ()) 
 
 
 def load_labels(base, label_dirs: list[str]):
-    observations, actions = [], []
+    """Return ``(observations, actions, target_seeds)`` of compatible oracle runs (float32, float32, list)."""
+
+    observations, actions, seeds = [], [], []
     for label_dir in label_dirs:
         directory = Path(label_dir)
-        for name in ("config.yaml", "oracle_observations.npy", "oracle_actions.npy"):
+        for name in ("config.yaml", "oracle_observations.npy", "oracle_actions.npy", "oracle.csv"):
             if not (directory / name).is_file():
                 raise FileNotFoundError(f"label run {directory} is missing {name}.")
         _require_compatible(base, directory)
         obs = np.load(directory / "oracle_observations.npy")
         act = np.load(directory / "oracle_actions.npy")
-        if obs.shape[0] != act.shape[0]:
+        rows = read_rows(directory / "oracle.csv")
+        if not (obs.shape[0] == act.shape[0] == len(rows)):
             raise ValueError(f"label run {directory} has inconsistent lengths.")
         observations.append(obs)
         actions.append(act)
-    return np.concatenate(observations).astype(np.float32), np.concatenate(actions).astype(np.float32)
+        seeds.extend(int(row["target_seed"]) for row in rows)
+    return (
+        np.concatenate(observations).astype(np.float32),
+        np.concatenate(actions).astype(np.float32),
+        seeds,
+    )
 
 
 def main() -> None:
@@ -210,6 +227,8 @@ def main() -> None:
         ),
         output=replace(base.output, root=args.output_root or base.output.root),
     )
+    if args.augment_symmetry:
+        require_symmetry_augmentation_allowed(config)
     run_dir = Path(config.output.root) / config.experiment.id / args.run_id
     if run_dir.exists():
         raise FileExistsError(f"run directory already exists: {run_dir}")
@@ -232,7 +251,16 @@ def main() -> None:
             system_spec=spec,
             observation_shape=tuple(env.observation_space.shape),
             action_space=env.action_space,
+            latent_basis=env.parameterization.basis,
         )
+        if labels is not None:
+            for index in range(min(3, len(labels[2]))):
+                observation, _ = env.reset(seed=labels[2][index])
+                if not np.array_equal(np.asarray(observation, dtype=np.float32), labels[0][index]):
+                    raise ValueError(
+                        f"stored observation of label {index} (target_seed={labels[2][index]}) "
+                        "does not match the environment observation."
+                    )
         agent = build_agent_from_checkpoint(checkpoint, action_space=env.action_space, device=args.device)
         agent.train()
         optimizer = torch.optim.Adam(agent.actor_mean.parameters(), lr=args.learning_rate)
@@ -415,6 +443,7 @@ def main() -> None:
             update=0,
             observation_shape=tuple(env.observation_space.shape),
             action_space=env.action_space,
+            latent_basis=env.parameterization.basis,
             experiment_id=config.experiment.id,
             run_id=args.run_id,
             git_commit=git_value(["rev-parse", "HEAD"]),

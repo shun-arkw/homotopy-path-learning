@@ -17,7 +17,7 @@ import numpy as np
 import numpy.typing as npt
 from numpy.typing import ArrayLike
 
-from homotopy_path_learning.config import Phase6Config, build_env, build_system_spec
+from homotopy_path_learning.config import ConfigError, Phase6Config, build_env, build_system_spec, validate_config
 from homotopy_path_learning.evaluation.datasets import fixed_evaluation_seeds
 
 
@@ -265,9 +265,21 @@ def resolve_latent_dim(config: Phase6Config, latent_dim: int | str | None) -> in
 
 
 def with_latent_dim(config: Phase6Config, latent_dim: int) -> Phase6Config:
-    """Return a copy of ``config`` with ``path.latent_dim`` replaced."""
+    """Return a validated copy of ``config`` with ``path.latent_dim`` replaced.
 
-    return replace(config, path=replace(config.path, latent_dim=_positive_int("latent_dim", latent_dim)))
+    With ``path.basis == 'family'`` the latent dimension is fixed to ``2 * sampler.subspace_dim`` and
+    any other value raises ``ConfigError``; otherwise the replaced config is re-validated
+    (``validate_config``), so an override cannot bypass the config checks.
+    """
+
+    value = _positive_int("latent_dim", latent_dim)
+    if config.path.basis == "family" and value != config.path.latent_dim:
+        raise ConfigError(
+            f"latent_dim cannot be overridden with path.basis 'family' (fixed to {config.path.latent_dim}), got {value}."
+        )
+    updated = replace(config, path=replace(config.path, latent_dim=value))
+    validate_config(updated)
+    return updated
 
 
 def run_oracle(

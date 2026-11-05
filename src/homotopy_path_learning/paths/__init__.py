@@ -12,6 +12,7 @@ from homotopy_path_learning.paths.parameterization import (
     nonleading_coefficient_mask,
     real_to_complex_coefficients,
     real_to_complex_coeffs,
+    realify_complex_basis,
     validate_control_points,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "nonleading_coefficient_mask",
     "real_to_complex_coefficients",
     "real_to_complex_coeffs",
+    "realify_complex_basis",
     "validate_control_points",
 ]

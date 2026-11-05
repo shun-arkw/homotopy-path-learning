@@ -342,3 +342,28 @@ def test_augmentation_clip_fraction_counts_all_labels():
     train_idx = np.random.default_rng(0).permutation(60)[: result.n_train]
     expected = (np.abs(3.0 * labels[train_idx]) > 1.0 + 1e-6).mean()
     assert result.clipped_label_fraction == pytest.approx(expected)
+
+
+def test_explicit_validation_set_uses_all_training_data_and_fixed_validation():
+    obs, act = make_data(n=240)
+    train_obs, train_act, val_obs, val_act = obs[:200], act[:200], obs[200:], act[200:]
+    agent = make_agent()
+    result, _ = run(agent, train_obs, train_act, validation_observations=val_obs, validation_actions=val_act, epochs=20)
+    assert result.n_train == 200 and result.n_val == 40
+    with torch.no_grad():
+        pred = predicted_actions(agent, torch.as_tensor(val_obs))
+    expected = float(torch.nn.functional.mse_loss(pred, torch.as_tensor(val_act)).item())
+    assert result.best_val_loss == pytest.approx(expected, rel=1e-6)
+    # val_fraction is ignored with an explicit validation set (even an invalid value).
+    run(make_agent(), train_obs, train_act, validation_observations=val_obs, validation_actions=val_act,
+        epochs=1, val_fraction=0.0)
+
+
+def test_explicit_validation_set_is_checked():
+    obs, act = make_data(n=60)
+    with pytest.raises(ValueError, match="together"):
+        run(make_agent(), obs, act, validation_observations=obs[:5], epochs=1)
+    with pytest.raises(ValueError, match="shapes"):
+        run(make_agent(), obs, act, validation_observations=obs[:5, :4], validation_actions=act[:5], epochs=1)
+    with pytest.raises(ValueError, match="outside"):
+        run(make_agent(), obs, act, validation_observations=obs[:5], validation_actions=act[:5] + 3.0, epochs=1)

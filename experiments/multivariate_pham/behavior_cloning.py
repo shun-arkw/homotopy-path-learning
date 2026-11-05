@@ -11,7 +11,13 @@ preload_julia()
 
 import numpy as np
 
-from homotopy_path_learning.config import build_env, build_system_spec, load_config, save_config
+from homotopy_path_learning.config import (
+    build_env,
+    build_system_spec,
+    load_config,
+    require_symmetry_augmentation_allowed,
+    save_config,
+)
 from homotopy_path_learning.evaluation.evaluator import evaluate_checkpoint
 from homotopy_path_learning.evaluation.metrics import read_rows, write_rows
 from homotopy_path_learning.evaluation.oracle import (
@@ -40,11 +46,14 @@ def _compatibility_key(config) -> dict:
         "path.bezier_degree": config.path.bezier_degree,
         "path.latent_dim": config.path.latent_dim,
         "path.basis_seed": config.path.basis_seed,
+        "path.basis": config.path.basis,
         "path.action_limit": config.path.action_limit,
         "system.degrees": config.system.degrees,
         "system.free_exponents": config.system.free_exponents,
         "sampler.type": config.sampler.type,
         "sampler.bound": config.sampler.bound,
+        "sampler.subspace_dim": config.sampler.subspace_dim,
+        "sampler.family_seed": config.sampler.family_seed,
         "tracker": config.tracker,
     }
 
@@ -152,6 +161,13 @@ def main() -> None:
     parser.add_argument("--latent-dim", default=None, help="Integer or 'full'; default keeps the config.")
     parser.add_argument("--augment-symmetry", action="store_true", help="Augment with the symmetry group (needs full latent space).")
     parser.add_argument("--num-train", type=int, default=None)
+    parser.add_argument(
+        "--val-label-run-dir",
+        action="append",
+        default=[],
+        help="Oracle runs used only as a fixed validation set (repeatable; K=1 labels). With it, all "
+        "(--num-train) training labels are used for training and --val-fraction is ignored.",
+    )
     parser.add_argument("--num-instances", type=int, default=None, help="Evaluation instances.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--experiment-id", required=True)
@@ -192,6 +208,10 @@ def main() -> None:
         ),
         output=replace(base.output, root=args.output_root or base.output.root),
     )
+    if args.augment_symmetry:
+        require_symmetry_augmentation_allowed(config)
+    if args.val_label_run_dir and n_labels_per_target != 1:
+        parser.error("--val-label-run-dir requires K=1 labels.")
     run_dir = Path(config.output.root) / config.experiment.id / args.run_id
     if run_dir.exists():
         raise FileExistsError(f"run directory already exists: {run_dir}")
@@ -217,6 +237,14 @@ def main() -> None:
             target_seeds[: args.num_train],
         )
 
+    val_observations = val_actions = None
+    val_seeds: list[int] = []
+    if args.val_label_run_dir:
+        val_observations, val_actions, val_seeds = load_labels(base, args.val_label_run_dir)
+        overlap = set(val_seeds) & set(target_seeds)
+        if overlap:
+            raise ValueError(f"{len(overlap)} validation target seeds also appear in the training labels.")
+
     run_dir.mkdir(parents=True)
     start_time = datetime.now(timezone.utc).isoformat()
     seed_everything(args.seed)
@@ -229,8 +257,15 @@ def main() -> None:
                     f"stored observation of label {index} (target_seed={target_seeds[index]}) "
                     "does not match the environment observation."
                 )
+        for index in range(min(3, len(val_seeds))):
+            observation, _ = env.reset(seed=val_seeds[index])
+            if not np.array_equal(np.asarray(observation, dtype=np.float32), val_observations[index]):
+                raise ValueError(
+                    f"stored observation of validation label {index} (target_seed={val_seeds[index]}) "
+                    "does not match the environment observation."
+                )
         agent = build_agent(config, env, device=args.device)
-        for label_dir in list(args.label_run_dir) + [d for group in label_groups for d in group]:
+        for label_dir in list(args.label_run_dir) + [d for group in label_groups for d in group] + list(args.val_label_run_dir):
             basis_path = Path(label_dir) / "latent_basis.npy"
             if basis_path.is_file() and not np.allclose(np.load(basis_path), env.parameterization.basis, atol=1e-12):
                 raise ValueError(f"latent basis of label run {label_dir} differs from the environment basis.")
@@ -257,6 +292,8 @@ def main() -> None:
             device=args.device,
             augmentations=augmentations,
             label_reduction=args.label_reduction,
+            validation_observations=val_observations,
+            validation_actions=val_actions,
         )
         write_rows(
             run_dir / "train_metrics.csv",
@@ -273,6 +310,7 @@ def main() -> None:
             update=0,
             observation_shape=tuple(env.observation_space.shape),
             action_space=env.action_space,
+            latent_basis=env.parameterization.basis,
             experiment_id=config.experiment.id,
             run_id=args.run_id,
             git_commit=git_value(["rev-parse", "HEAD"]),
@@ -295,6 +333,7 @@ def main() -> None:
         "label_groups": label_groups,
         "n_labels_per_target": n_labels_per_target,
         "label_reduction": args.label_reduction,
+        "val_label_run_dirs": list(args.val_label_run_dir),
         "n_labels": n_labels,
         "n_train": result.n_train,
         "n_val": result.n_val,

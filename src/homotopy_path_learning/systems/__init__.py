@@ -4,6 +4,8 @@ from homotopy_path_learning.systems.pham import build_pham_spec
 from homotopy_path_learning.systems.sampling import (
     CoefficientSampler,
     ComplexUniformSampler,
+    GaussianSubspaceSampler,
+    make_complex_subspace_basis,
     pham_start_coefficients,
     sample_target_coefficients,
     start_system_coefficients,
@@ -14,8 +16,10 @@ from homotopy_path_learning.systems.start_solutions import pham_start_solutions
 __all__ = [
     "CoefficientSampler",
     "ComplexUniformSampler",
+    "GaussianSubspaceSampler",
     "PolynomialSystemSpec",
     "build_pham_spec",
+    "make_complex_subspace_basis",
     "pham_start_coefficients",
     "pham_start_solutions",
     "sample_target_coefficients",

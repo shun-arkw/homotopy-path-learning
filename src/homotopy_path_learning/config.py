@@ -11,7 +11,13 @@ import yaml
 
 from homotopy_path_learning.backends.types import TrackerConfig
 from homotopy_path_learning.envs import BezierPhamEnv
-from homotopy_path_learning.systems import ComplexUniformSampler, build_pham_spec
+from homotopy_path_learning.paths.parameterization import realify_complex_basis
+from homotopy_path_learning.systems import (
+    CoefficientSampler,
+    ComplexUniformSampler,
+    GaussianSubspaceSampler,
+    build_pham_spec,
+)
 from homotopy_path_learning.systems.spec import PolynomialSystemSpec
 
 
@@ -37,6 +43,9 @@ class SystemSettings:
 class SamplerSettings:
     type: str
     bound: float
+    # Optional keys (ADR-0008): required for type 'gaussian_subspace', absent (None) otherwise.
+    subspace_dim: int | None = None
+    family_seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +54,9 @@ class PathSettings:
     latent_dim: int
     basis_seed: int
     action_limit: float
+    # Optional key (ADR-0008): 'random' (default; U from basis_seed) or 'family' (U from the
+    # target family's basis W, requires sampler.type 'gaussian_subspace').
+    basis: str = "random"
 
 
 @dataclass(frozen=True)
@@ -151,6 +163,9 @@ class Phase6Config:
     evaluation: EvaluationSettings
     output: OutputSettings
 
+
+SAMPLER_TYPES = ("complex_uniform", "gaussian_subspace")
+PATH_BASES = ("random", "family")
 
 ROOT_KEYS = {
     "experiment",
@@ -308,11 +323,17 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
         keys={"id", "name", "seed", "device"},
     )
     system_raw = _mapping(root["system"], name="system", keys={"degrees", "free_exponents"})
-    sampler_raw = _mapping(root["sampler"], name="sampler", keys={"type", "bound"})
+    sampler_raw = _mapping(
+        root["sampler"],
+        name="sampler",
+        keys={"type", "bound"},
+        optional={"subspace_dim", "family_seed"},
+    )
     path_raw = _mapping(
         root["path"],
         name="path",
         keys={"bezier_degree", "latent_dim", "basis_seed", "action_limit"},
+        optional={"basis"},
     )
     tracker_raw = _mapping(
         root["tracker"],
@@ -402,17 +423,22 @@ def parse_config_dict(data: dict[str, Any]) -> Phase6Config:
         device=_str(exp_raw["device"], name="experiment.device", nonempty=True),
     )
     sampler_type = _str(sampler_raw["type"], name="sampler.type", nonempty=True)
-    if sampler_type != "complex_uniform":
-        raise ConfigError("sampler.type must be 'complex_uniform'.")
+    if sampler_type not in SAMPLER_TYPES:
+        raise ConfigError(f"sampler.type must be one of {list(SAMPLER_TYPES)}, got {sampler_type!r}.")
+    subspace_raw = sampler_raw.get("subspace_dim")
+    family_seed_raw = sampler_raw.get("family_seed")
     sampler = SamplerSettings(
         type=sampler_type,
         bound=_float(sampler_raw["bound"], name="sampler.bound", nonnegative=True),
+        subspace_dim=None if subspace_raw is None else _int(subspace_raw, name="sampler.subspace_dim", positive=True),
+        family_seed=None if family_seed_raw is None else _int(family_seed_raw, name="sampler.family_seed"),
     )
     path = PathSettings(
         bezier_degree=_int(path_raw["bezier_degree"], name="path.bezier_degree", positive=True),
         latent_dim=_int(path_raw["latent_dim"], name="path.latent_dim", positive=True),
         basis_seed=_int(path_raw["basis_seed"], name="path.basis_seed"),
         action_limit=_float(path_raw["action_limit"], name="path.action_limit", positive=True),
+        basis=_str(path_raw.get("basis", "random"), name="path.basis", nonempty=True),
     )
     if path.bezier_degree < 2:
         raise ConfigError("path.bezier_degree must be at least 2.")
@@ -543,7 +569,84 @@ def validate_config(config: Phase6Config) -> None:
         build_tracker_config(config)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"tracker: {exc}") from exc
-    build_system_spec(config)
+    spec = build_system_spec(config)
+    _validate_family(config, spec)
+
+
+def _validate_family(config: Phase6Config, spec: PolynomialSystemSpec) -> None:
+    """Check the target-family and latent-basis keys (ADR-0008)."""
+
+    sampler, path = config.sampler, config.path
+    n_free = int(np.count_nonzero(spec.free_coefficient_mask))
+    if sampler.type not in SAMPLER_TYPES:
+        raise ConfigError(f"sampler.type must be one of {list(SAMPLER_TYPES)}, got {sampler.type!r}.")
+    if sampler.type == "complex_uniform":
+        if sampler.subspace_dim is not None or sampler.family_seed is not None:
+            raise ConfigError("sampler.subspace_dim and sampler.family_seed are only allowed for 'gaussian_subspace'.")
+    else:
+        if sampler.subspace_dim is None or sampler.family_seed is None:
+            raise ConfigError("sampler type 'gaussian_subspace' requires sampler.subspace_dim and sampler.family_seed.")
+        if not 1 <= sampler.subspace_dim <= n_free:
+            raise ConfigError(
+                f"sampler.subspace_dim must be in [1, {n_free}] (number of free coefficients), "
+                f"got {sampler.subspace_dim}."
+            )
+    if path.basis not in PATH_BASES:
+        raise ConfigError(f"path.basis must be one of {list(PATH_BASES)}, got {path.basis!r}.")
+    if path.latent_dim > 2 * n_free:
+        raise ConfigError(f"path.latent_dim={path.latent_dim} exceeds 2 * n_free_coeffs={2 * n_free}.")
+    if path.basis == "family":
+        if sampler.type != "gaussian_subspace":
+            raise ConfigError("path.basis 'family' requires sampler.type 'gaussian_subspace'.")
+        if path.latent_dim != 2 * int(sampler.subspace_dim):
+            raise ConfigError(
+                f"path.basis 'family' requires path.latent_dim == 2 * sampler.subspace_dim "
+                f"({2 * int(sampler.subspace_dim)}), got {path.latent_dim}."
+            )
+
+
+def target_distribution_is_symmetric(config: Phase6Config) -> bool:
+    """True if the target distribution is invariant under the symmetry group of ``symmetry.md``.
+
+    The complex uniform sampler is treated as invariant, as in all earlier runs (for degree-3 kinds the
+    square is not invariant under the cube-root rotation; see ADR-0008). A Gaussian subspace family is
+    invariant only for ``subspace_dim == n_free`` (independent ``CN`` coefficients).
+    """
+
+    if config.sampler.type == "complex_uniform":
+        return True
+    n_free = int(np.count_nonzero(build_system_spec(config).free_coefficient_mask))
+    return int(config.sampler.subspace_dim) == n_free
+
+
+def require_symmetry_augmentation_allowed(config: Phase6Config) -> None:
+    """Raise ``ConfigError`` unless symmetry augmentation is valid for ``config``.
+
+    Requires a symmetric target distribution (:func:`target_distribution_is_symmetric`) and a square
+    latent basis (``path.latent_dim == 2 * n_free``) so that the latent action map is defined.
+    """
+
+    n_free = int(np.count_nonzero(build_system_spec(config).free_coefficient_mask))
+    if not target_distribution_is_symmetric(config):
+        raise ConfigError(
+            "symmetry augmentation requires a target distribution invariant under the symmetry group; "
+            f"sampler {config.sampler.type!r} with subspace_dim={config.sampler.subspace_dim} is not."
+        )
+    if config.path.latent_dim != 2 * n_free:
+        raise ConfigError(
+            f"symmetry augmentation requires the full latent space (latent_dim {2 * n_free}), got {config.path.latent_dim}."
+        )
+
+
+def target_family_record(config: Phase6Config) -> dict[str, Any]:
+    """Return the target-family identity stored in checkpoints and metadata (ADR-0008)."""
+
+    return {
+        "sampler_type": config.sampler.type,
+        "subspace_dim": config.sampler.subspace_dim,
+        "family_seed": config.sampler.family_seed,
+        "path_basis": config.path.basis,
+    }
 
 
 def load_config(path: str | Path) -> Phase6Config:
@@ -623,12 +726,24 @@ def build_system_spec(config: Phase6Config) -> PolynomialSystemSpec:
     return build_pham_spec(config.system.degrees, config.system.free_exponents)
 
 
-def build_sampler(config: Phase6Config) -> ComplexUniformSampler:
-    """Build the target coefficient sampler from config."""
+def build_sampler(config: Phase6Config) -> CoefficientSampler:
+    """Build the target coefficient sampler from config.
 
-    if config.sampler.type != "complex_uniform":
-        raise ConfigError("only complex_uniform sampler is supported.")
-    return ComplexUniformSampler(bound=config.sampler.bound)
+    ``complex_uniform`` gives :class:`ComplexUniformSampler`; ``gaussian_subspace`` gives
+    :class:`GaussianSubspaceSampler` whose ``W`` is rebuilt deterministically from
+    ``sampler.family_seed`` (every environment, including ``EnvPool`` workers, gets the same ``W``).
+    """
+
+    if config.sampler.type == "complex_uniform":
+        return ComplexUniformSampler(bound=config.sampler.bound)
+    if config.sampler.type == "gaussian_subspace":
+        return GaussianSubspaceSampler.from_spec(
+            build_system_spec(config),
+            subspace_dim=int(config.sampler.subspace_dim),
+            family_seed=int(config.sampler.family_seed),
+            bound=config.sampler.bound,
+        )
+    raise ConfigError(f"unsupported sampler type {config.sampler.type!r}.")
 
 
 def build_tracker_config(config: Phase6Config) -> TrackerConfig:
@@ -657,17 +772,24 @@ def build_env(config: Phase6Config, *, backend: object | None = None) -> BezierP
     owns a Julia backend according to the Phase 5 environment rules.
     """
 
+    sampler = build_sampler(config)
+    basis = None
+    if config.path.basis == "family":
+        if not isinstance(sampler, GaussianSubspaceSampler):
+            raise ConfigError("path.basis 'family' requires sampler.type 'gaussian_subspace'.")
+        basis = realify_complex_basis(sampler.basis)
     return BezierPhamEnv(
         system_spec=build_system_spec(config),
         bezier_degree=config.path.bezier_degree,
         latent_dim=config.path.latent_dim,
-        coefficient_sampler=build_sampler(config),
+        coefficient_sampler=sampler,
         tracker_config=build_tracker_config(config),
         reject_weight=config.environment.reject_weight,
         failure_penalty=config.environment.failure_penalty,
         reward_scale=config.environment.reward_scale,
         action_limit=config.path.action_limit,
         basis_seed=config.path.basis_seed,
+        basis=basis,
         backend=backend,
         warmup_backend=config.environment.warmup_backend,
     )
@@ -692,7 +814,10 @@ __all__ = [
     "config_to_dict",
     "load_config",
     "parse_config_dict",
+    "require_symmetry_augmentation_allowed",
     "save_config",
+    "target_distribution_is_symmetric",
+    "target_family_record",
     "validate_config",
     "with_overrides",
 ]

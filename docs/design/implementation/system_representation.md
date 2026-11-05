@@ -118,6 +118,24 @@ class ComplexUniformSampler:
 
 自由係数の実部と虚部を独立に$\operatorname{Unif}[-b,b]$から生成し，先頭係数を$1$へ上書きする．
 
+部分空間の族（ADR-0008）：
+
+```python
+def make_complex_subspace_basis(rng, *, n_free, subspace_dim) -> np.ndarray  # (n_free, k), complex128
+
+@dataclass(frozen=True, eq=False)
+class GaussianSubspaceSampler:
+    basis: np.ndarray   # W, (n_free, k), 列は正規直交
+    bound: float = 1.0
+
+    @classmethod
+    def from_spec(cls, spec, *, subspace_dim, family_seed, bound=1.0): ...
+```
+
+- `make_complex_subspace_basis`：複素ガウス行列（実部，虚部の順に`rng.standard_normal`）の縮約QR分解のQに，$R_{ll}$を正の実数にする位相を列ごとに掛ける．`from_spec`は`default_rng(family_seed)`を使うので，同じseedからは常に同じ$W$になる（`EnvPool`の各workerで作り直しても同じ）．
+- `sample`：$\boldsymbol{u}$の各成分の実部と虚部（実部が先）を，分散$s^2/2$，$s^2=(n_{\mathrm{free}}/k)\cdot2b^2/3$の正規分布から生成し，$\boldsymbol{c}_{\mathrm{free}}=W\boldsymbol{u}$とする．先頭係数は$1$．
+- 設定ファイル：`sampler.type: gaussian_subspace`，`sampler.subspace_dim`（$k$，$1\le k\le n_{\mathrm{free}}$），`sampler.family_seed`．一様分布ではこの2つを指定しない（`save_config`は`null`を書き，読み込みで受け付ける）．
+
 ## 7．開始解
 
 開始解集合はPython側でも生成できるが，追跡に使用する正式な開始解はJulia側で生成する．Python側の生成関数は，形状検証とテストに利用する．

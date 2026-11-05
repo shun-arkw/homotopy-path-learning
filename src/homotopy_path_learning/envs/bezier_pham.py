@@ -130,6 +130,11 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
     Gymnasium space; it is converted to ``float64`` before expanding through
     :class:`BezierParameterization`.
 
+    The latent basis ``U`` is drawn from ``default_rng(basis_seed)`` (columns orthonormal,
+    shape ``(2 * n_free_coeffs, latent_dim)``) unless ``basis`` is given; then ``basis`` is used
+    as ``U`` (same shape and checks) and ``basis_seed`` is ignored. The observation space is
+    bounded by ``ComplexUniformSampler.bound`` for that sampler and unbounded otherwise.
+
     If ``backend`` is ``None``, the environment constructs and owns a
     :class:`JuliaTrackerBackend`; ``close()`` closes that backend. If a backend
     is injected, it is initialized by the environment but remains owned by the
@@ -151,6 +156,7 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
         reward_scale: float = 1.0,
         action_limit: float = 1.0,
         basis_seed: int = 0,
+        basis: npt.ArrayLike | None = None,
         backend: TrackerBackend | None = None,
         warmup_backend: bool = False,
         render_mode: None = None,
@@ -203,12 +209,24 @@ class BezierPhamEnv(gym.Env[npt.NDArray[np.float32], npt.NDArray[np.float32]]):
 
         self.start_coefficients = start_system_coefficients(system_spec)
         self.free_indices = np.flatnonzero(system_spec.free_coefficient_mask).astype(np.int64)
-        self.parameterization = BezierParameterization.from_spec(
-            system_spec,
-            bezier_degree=degree,
-            latent_dim=latent,
-            rng=np.random.default_rng(seed_value),
-        )
+        if basis is None:
+            self.parameterization = BezierParameterization.from_spec(
+                system_spec,
+                bezier_degree=degree,
+                latent_dim=latent,
+                rng=np.random.default_rng(seed_value),
+            )
+        else:
+            basis_array = np.array(basis, dtype=np.float64, copy=True)
+            if basis_array.ndim != 2 or basis_array.shape[1] != latent:
+                raise ValueError(
+                    f"basis must have latent_dim={latent} columns, got shape {basis_array.shape}."
+                )
+            self.parameterization = BezierParameterization.from_basis(
+                system_spec,
+                bezier_degree=degree,
+                basis=basis_array,
+            )
 
         self.action_space = spaces.Box(
             low=-limit,

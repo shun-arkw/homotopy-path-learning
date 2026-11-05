@@ -83,14 +83,30 @@ def test_default_size_parameter_count_is_reported_and_basis_is_buffer() -> None:
     assert "basis" not in dict(actor.named_parameters())
 
 
-def test_unsupported_support_and_nonsquare_basis_are_rejected() -> None:
+def test_unsupported_support_and_invalid_basis_are_rejected() -> None:
     _, dense = make_spec("exp-0007-n2-d33-dense-seed0.yaml")
     real_dim = 2 * int(np.count_nonzero(dense.free_coefficient_mask))
     with pytest.raises(NotImplementedError):
         AttentionActor(dense, np.eye(real_dim), 3, **SMALL)
     _, spec = make_spec("exp-0004-smoke.yaml")
-    with pytest.raises(ValueError, match="square"):
-        AttentionActor(spec, np.eye(12)[:, :4], 3, **SMALL)
+    with pytest.raises(ValueError, match="shape"):
+        AttentionActor(spec, np.eye(10)[:, :4], 3, **SMALL)  # wrong number of rows
+    with pytest.raises(ValueError, match="orthonormal"):
+        AttentionActor(spec, 2.0 * np.eye(12)[:, :4], 3, **SMALL)
+
+
+def test_nonsquare_orthonormal_basis_projects_the_coefficient_delta() -> None:
+    """A basis of shape (2D, l) with orthonormal columns gives actions u_k = U^T delta_k of size (d_b-1) l."""
+
+    _, spec = make_spec("exp-0004-smoke.yaml")
+    q, _ = np.linalg.qr(np.random.default_rng(3).standard_normal((12, 4)))
+    torch.manual_seed(0)
+    actor = AttentionActor(spec, q, 3, **SMALL)
+    assert actor.latent_dim == 4 and actor.action_dim == 8
+    obs = torch.randn(5, 12)
+    delta = actor.coefficient_delta(obs)
+    expected = (delta @ torch.as_tensor(q, dtype=torch.float32)).reshape(5, 8)
+    torch.testing.assert_close(actor(obs), expected)
 
 
 def test_actor_critic_default_is_unchanged_mlp_and_attention_needs_spec() -> None:

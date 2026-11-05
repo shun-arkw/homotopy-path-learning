@@ -53,6 +53,12 @@ $$
 
 を生成する．完全な$\boldsymbol{\delta}_k\in\mathbb{C}^M$へ戻す際，先頭係数成分を$0$に固定する．
 
+$U$の選び方（`path.basis`，ADR-0008）：
+
+- `random`（既定）：`basis_seed`から`make_orthonormal_basis`で作る．
+- `family`：目的系の族の$W$の実数化$U_W=\begin{pmatrix}\mathrm{Re}W&-\mathrm{Im}W\\\mathrm{Im}W&\mathrm{Re}W\end{pmatrix}$（`realify_complex_basis`）．$m=2k$．$\boldsymbol{z}=[\mathrm{Re}\,\boldsymbol{z}_c,\mathrm{Im}\,\boldsymbol{z}_c]$に対して$U_W\boldsymbol{z}=[\mathrm{Re}(W\boldsymbol{z}_c),\mathrm{Im}(W\boldsymbol{z}_c)]$なので，摂動は$W$の像に留まる．
+- 外から与える基底は`BezierParameterization.from_basis(spec, bezier_degree=..., basis=U)`で使う．環境では`BezierPhamEnv(..., basis=U)`（`basis_seed`は使われない）．
+
 ## 4．推奨API
 
 ```python

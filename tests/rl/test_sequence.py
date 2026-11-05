@@ -96,8 +96,11 @@ def test_parameter_count_matches_attention_within_five_percent_and_basis_is_buff
 
 def test_invalid_arguments_are_rejected() -> None:
     _, spec = make_spec("exp-0004-smoke.yaml")
-    with pytest.raises(ValueError, match="square"):
-        SequenceActor(spec, np.eye(12)[:, :4], 3, **SMALL)
+    with pytest.raises(ValueError, match="shape"):
+        SequenceActor(spec, np.eye(10)[:, :4], 3, **SMALL)
+    with pytest.raises(ValueError, match="orthonormal"):
+        SequenceActor(spec, 2.0 * np.eye(12)[:, :4], 3, **SMALL)
+    assert SequenceActor(spec, np.eye(12)[:, :4], 3, **SMALL).action_dim == 8
     with pytest.raises(ValueError, match="bezier_degree"):
         SequenceActor(spec, np.eye(12), 1, **SMALL)
     with pytest.raises(ValueError, match="divide"):

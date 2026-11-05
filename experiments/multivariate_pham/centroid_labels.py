@@ -29,11 +29,14 @@ def _compatibility_key(config) -> dict:
         "path.bezier_degree": config.path.bezier_degree,
         "path.latent_dim": config.path.latent_dim,
         "path.basis_seed": config.path.basis_seed,
+        "path.basis": config.path.basis,
         "path.action_limit": config.path.action_limit,
         "system.degrees": config.system.degrees,
         "system.free_exponents": config.system.free_exponents,
         "sampler.type": config.sampler.type,
         "sampler.bound": config.sampler.bound,
+        "sampler.subspace_dim": config.sampler.subspace_dim,
+        "sampler.family_seed": config.sampler.family_seed,
         "tracker": config.tracker,
     }
 

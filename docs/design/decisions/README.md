@@ -18,3 +18,4 @@
 - `ADR-0005-first-order-taylor-tracking.md`
 - `ADR-0006-reference-docker-environment.md`
 - `ADR-0007-coefficient-token-attention.md`（Accepted，第1段階のみ）
+- `ADR-0008-subspace-target-family.md`（Accepted）

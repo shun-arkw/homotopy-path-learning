@@ -221,6 +221,7 @@ def load_policy_for_config(
             system_spec=build_system_spec(config),
             observation_shape=tuple(env.observation_space.shape),
             action_space=env.action_space,
+            latent_basis=env.parameterization.basis,
         )
         return build_agent_from_checkpoint(checkpoint, action_space=env.action_space, device=device)
     finally:

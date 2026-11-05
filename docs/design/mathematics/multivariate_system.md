@@ -861,6 +861,23 @@ $$
 とする．
 
 
+### 11.1．目的系の族と，族の基底（ADR-0008）
+
+目的系の自由係数を，$k$次元の部分空間に限る設定を加える．
+
+$$
+\boldsymbol{c}_{F,\mathrm{free}}=W\boldsymbol{u},
+\qquad
+W\in\mathbb{C}^{D_{\mathrm{free}}\times k},\quad W^{\mathsf H}W=I_k,
+\qquad
+\boldsymbol{u}\sim\mathcal{CN}\!\left(0,\ \frac{D_{\mathrm{free}}}{k}\cdot\frac{2b^2}{3}I_k\right).
+$$
+
+- $W$は`family_seed`から作るランダムな行列である．$E|c_j|^2$を$j$と$W$について平均すると，一様分布$\operatorname{Unif}[-b,b]^2$と同じ$2b^2/3$になる．個々の係数の分散は$W$の第$j$行のノルムの2乗に比例する．
+- $k=D_{\mathrm{free}}$では$W$はユニタリ行列で，自由係数は独立な$\mathcal{CN}(0,2b^2/3)$に従う．この分布は対称性の群（`symmetry.md`）の作用で変わらない．$k<D_{\mathrm{free}}$では，$W$の像は群の作用で閉じない．
+- 開始系$\boldsymbol{c}_G$は変えない．線形パスは，$\boldsymbol{c}_G$と$W$の列が張る$(k+1)$次元のアフィン空間に乗る．Pham型の系なので，族の目的系も重複度込みで$\prod_id_i$個の解を持つ．
+- 族の基底：中間制御点の摂動を$W$の像に限るときは，$U=U_W=\begin{pmatrix}\mathrm{Re}W&-\mathrm{Im}W\\\mathrm{Im}W&\mathrm{Re}W\end{pmatrix}$（$m=2k$）とする．$W^{\mathsf H}W=I$なら$U_W^\top U_W=I_{2k}$であり，$\boldsymbol{z}_k=[\mathrm{Re}\,\boldsymbol{\zeta}_k,\mathrm{Im}\,\boldsymbol{\zeta}_k]$に対して摂動の自由成分は$W\boldsymbol{\zeta}_k$になる．このとき，摂動を加えたベジェ曲線全体も上のアフィン空間に乗る．
+
 ## 12．PPOの状態
 
 開始系$G$を固定する場合，状態を目的系の係数ベクトルにより

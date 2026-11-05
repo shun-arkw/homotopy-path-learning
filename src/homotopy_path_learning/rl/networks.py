@@ -57,8 +57,8 @@ class ActorCritic(nn.Module):
     """Actor-critic network for one-dimensional Box observations and actions.
 
     ``actor_type='mlp'`` (default) builds the MLP actor. ``'attention'`` builds
-    an :class:`AttentionActor` and ``'sequence'`` a :class:`SequenceActor` (both need ``system_spec``, a square ``basis`` of
-    shape ``(2 D_free, 2 D_free)`` and ``bezier_degree``; ``attention_kwargs``
+    an :class:`AttentionActor` and ``'sequence'`` a :class:`SequenceActor` (both need ``system_spec``, a ``basis`` of
+    shape ``(2 D_free, latent_dim)`` with orthonormal columns and ``bezier_degree``; ``attention_kwargs``
     may contain ``d_model``, ``n_heads``, ``n_layers``, ``ff_dim``). The critic
     is always an MLP.
     """

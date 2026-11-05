@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
+import numpy.typing as npt
 import torch
 
-from homotopy_path_learning.config import Phase6Config, config_to_dict
+from homotopy_path_learning.config import Phase6Config, config_to_dict, target_family_record
 from homotopy_path_learning.rl.networks import ActorCritic
 from homotopy_path_learning.systems.spec import PolynomialSystemSpec
 
 
 CHECKPOINT_FORMAT_VERSION = 1
+
+# Target-family identity of checkpoints saved before ADR-0008 (no ``target_family`` key).
+LEGACY_TARGET_FAMILY = {
+    "sampler_type": "complex_uniform",
+    "subspace_dim": None,
+    "family_seed": None,
+    "path_basis": "random",
+}
 
 
 class CheckpointError(ValueError):
@@ -52,6 +62,15 @@ def _as_tuple(value: Any) -> tuple[int, ...]:
     return tuple(int(v) for v in value)
 
 
+def basis_sha256(basis: npt.ArrayLike) -> str:
+    """SHA-256 of the latent basis as C-contiguous float64 bytes, prefixed by its shape."""
+
+    array = np.ascontiguousarray(np.asarray(basis, dtype=np.float64))
+    digest = hashlib.sha256(str(array.shape).encode("ascii"))
+    digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
 def save_checkpoint(
     path: str | Path,
     *,
@@ -66,8 +85,13 @@ def save_checkpoint(
     experiment_id: str,
     run_id: str,
     git_commit: str,
+    latent_basis: npt.ArrayLike | None = None,
 ) -> None:
-    """Save a PPO checkpoint sufficient for deterministic evaluation."""
+    """Save a PPO checkpoint sufficient for deterministic evaluation.
+
+    The target-family identity (:func:`config.target_family_record`) is always stored. If
+    ``latent_basis`` (the environment's ``U``) is given, its :func:`basis_sha256` is stored too.
+    """
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +115,8 @@ def save_checkpoint(
         "bezier_degree": int(config.path.bezier_degree),
         "latent_dim": int(config.path.latent_dim),
         "system_spec": system_spec_to_dict(system_spec),
+        "target_family": target_family_record(config),
+        "latent_basis_sha256": None if latent_basis is None else basis_sha256(latent_basis),
         "git_commit": git_commit,
         "torch_version": torch.__version__,
     }
@@ -110,8 +136,15 @@ def validate_checkpoint(
     system_spec: PolynomialSystemSpec,
     observation_shape: tuple[int, ...],
     action_space: gym.spaces.Box,
+    latent_basis: npt.ArrayLike | None = None,
 ) -> None:
-    """Reject checkpoints that do not match the requested environment."""
+    """Reject checkpoints that do not match the requested environment.
+
+    Besides shapes, bounds, basis seed, Bezier degree, latent dimension and system, the target
+    family must match (checkpoints without ``target_family`` are treated as
+    :data:`LEGACY_TARGET_FAMILY`). If both the checkpoint and the caller provide a latent basis
+    (``latent_basis_sha256`` and ``latent_basis``), their hashes must be equal.
+    """
 
     if int(checkpoint.get("checkpoint_format_version", -1)) != CHECKPOINT_FORMAT_VERSION:
         raise CheckpointError("checkpoint format version mismatch.")
@@ -137,6 +170,13 @@ def validate_checkpoint(
         raise CheckpointError("latent dimension mismatch.")
     if checkpoint["system_spec"] != system_spec_to_dict(system_spec):
         raise CheckpointError("system specification mismatch.")
+    stored_family = dict(LEGACY_TARGET_FAMILY, **(checkpoint.get("target_family") or {}))
+    requested_family = target_family_record(config)
+    if stored_family != requested_family:
+        raise CheckpointError(f"target family mismatch: checkpoint {stored_family}, requested {requested_family}.")
+    stored_hash = checkpoint.get("latent_basis_sha256")
+    if stored_hash is not None and latent_basis is not None and stored_hash != basis_sha256(latent_basis):
+        raise CheckpointError("latent basis mismatch (SHA-256 differs).")
 
 
 def build_agent_from_checkpoint(
@@ -152,7 +192,8 @@ def build_agent_from_checkpoint(
     without either are MLP). An attention or sequence actor is rebuilt from the saved
     ``system_spec`` dictionary and ``bezier_degree``. Its latent basis ``U`` is
     a persistent buffer (``actor_mean.basis``) of the state dict, so a
-    placeholder identity basis is used for construction and the real basis is
+    placeholder basis of shape ``(2 D_free, latent_dim)`` (the first ``latent_dim``
+    columns of the identity) is used for construction and the real basis is
     restored by ``load_state_dict``; no environment is needed.
     """
 
@@ -171,7 +212,9 @@ def build_agent_from_checkpoint(
             "actor_type": actor_type,
             "attention_kwargs": {k: int(v) for k, v in attention_kwargs.items()},
             "system_spec": spec,
-            "basis": np.eye(2 * int(np.count_nonzero(spec.free_coefficient_mask))),
+            "basis": np.eye(
+                2 * int(np.count_nonzero(spec.free_coefficient_mask)), int(checkpoint["latent_dim"])
+            ),
             "bezier_degree": int(checkpoint["bezier_degree"]),
         }
     agent = ActorCritic(
@@ -192,6 +235,8 @@ def build_agent_from_checkpoint(
 __all__ = [
     "CHECKPOINT_FORMAT_VERSION",
     "CheckpointError",
+    "LEGACY_TARGET_FAMILY",
+    "basis_sha256",
     "build_agent_from_checkpoint",
     "load_checkpoint",
     "save_checkpoint",
