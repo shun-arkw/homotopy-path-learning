@@ -719,3 +719,13 @@ ADR-0008の部分空間の族（目的系の自由な係数を$W\boldsymbol{u}$�
 実験記録:  docs/experiments/EXP-0060-subspace-family-oracle/
 生成物:    outputs/EXP-0060/<run-id>/（実行スクリプトはoutputs/EXP-0060/scripts/run_oracle.sh）
 ```
+
+### EXP-0061：目的系をランダムな部分空間の族に限ると，学習（教師あり学習と微調整）は易しくなるか（n4-d3333，n5-d33333，外部サーバ）
+
+EXP-0060と同じ族（$k\in\{4,8,12,16\}$，$W$ 3つ）と一般（ガウス）で，教師データ（予算300，新しい追跡の設定，各1万個）→教師あり学習→微調整を行い，探索で得られる改善量に対する学習したパスの削減率の割合（指標1，指標2）を一般（ガウス）と比べる．一般（ガウス）の拡張の有無と，$k$=8の族で行動を全次元にした場合も比べる．教師データ・学習・評価は外部サーバ，n5-d33333の開発集合の追加分の探索と集計はメインの環境で行う．
+
+```text
+実行設定:  experiments/multivariate_pham/configs/exp-0060-*.yaml（EXP-0060の設定ファイルを流用）
+実験記録:  docs/experiments/EXP-0061-subspace-family-learning/
+生成物:    outputs/EXP-0061/<run-id>/（実行スクリプトはoutputs/EXP-0061/scripts/run_all.sh ほか）
+```
