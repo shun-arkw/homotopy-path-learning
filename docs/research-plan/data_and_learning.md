@@ -6,7 +6,7 @@
 
 ## 0．既存の学習設定と新構想の切り分け
 
-既存の `multivariate_system` は，$n\in\mathbb Z_{>0}$ に対する複素Pham型の目的多項式系 $F:\mathbb C^n\to\mathbb C^n$ を生成し，開始系 $G_i(\boldsymbol{x})=x_i^{d_i}-1$ を固定する．$d_i\in\mathbb Z_{>0}$ は第 $i$ 成分の次数である．Oracle探索，Behavior Cloning，PPOによる微調整，Attention方策は**係数パス**を最適化する．`EXP-0059`〜`EXP-0061` は，複素係数の低次元ファミリーと学習しやすさに関する既存研究である．
+既存の `multivariate_system` は，$n\in\mathbb Z_{>0}$ に対する複素Pham型の目的多項式系 $F:\mathbb C^n\to\mathbb C^n$ を生成し，開始系 $G_i(\boldsymbol{x})=x_i^{d_i}-1$ を固定する．$d_i\in\mathbb Z_{>0}$ は第 $i$ 成分の次数である．Oracle探索，Behavior Cloning，PPOによる微調整，Attention方策は**係数パス**を最適化する．`EXP-0059`（一般の目的系で行動だけをランダムな部分空間に絞った探索），`EXP-0060`（複素係数の低次元ファミリーでの探索），`EXP-0061`（同じファミリーでの教師あり学習と微調整の評価．事前登録済み）は，係数パス学習の方向の既存実験である．経緯は [係数パス学習の計画書](plan_coefficient_path.md) を参照．
 
 `ADR-0008` のファミリーは自由係数ベクトル $\boldsymbol{c}_{F,\mathrm{free}}\in\mathbb C^m$ に対し，$\boldsymbol{c}_{F,\mathrm{free}}=W\boldsymbol{u}$ として生成する．ここで $m=n(n+1)\in\mathbb Z_{>0}$，$W\in\mathbb C^{m\times k_f}$，$\boldsymbol{u}\in\mathbb C^{k_f}$，$k_f\in\{1,\ldots,m\}$ はファミリーの複素次元である．この $k_f$ は**候補点数** $k_c$ とは異なる．実応用の物理パラメータ化を自動的に表すものでもない．
 
